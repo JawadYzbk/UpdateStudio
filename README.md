@@ -4,7 +4,8 @@ Update Studio is a Windows desktop tool for creating deployment packages from
 an inclusive Git commit range. It can also generate a self-contained updater
 EXE that backs up affected files, installs the update, and supports rollback.
 
-![Update Studio](assets/update-studio.png)
+<img width="982" height="712" alt="image" src="https://github.com/user-attachments/assets/c935952f-69a2-4925-9f3f-0c9cbee276d9" />
+
 
 ## Features
 
