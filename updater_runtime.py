@@ -36,7 +36,7 @@ INSTALLER_TEXT = {
         "commands_help": "Uncheck commands this deployment does not need. Laravel maintenance enter/exit always runs.",
         "no_optional": "No optional commands in this profile.", "live_heading": "Live deployment log",
         "waiting": "Waiting to start deployment...", "install": "Install update", "deploying": "Deploying...",
-        "rollback": "Rollback latest", "storage_link": "Create storage link", "laravel_about": "Laravel about",
+        "rollback": "Rollback latest", "storage_link": "Create storage link", "laravel_about": "App info",
         "ready": "Ready to install", "env_check": "Environment validation", "readiness": "Deployment readiness",
         "services": "Required services", "running": "Running", "not_running": "Not running",
         "installed": "Installed", "package": "Package", "unknown": "Unknown",
@@ -49,8 +49,10 @@ INSTALLER_TEXT = {
         "failed_status": "Deployment failed; application files were restored", "failed_title": "Update failed",
         "choose_first": "Choose the deployed application folder first.", "folder_title": "Choose deployed application folder",
         "storage_title": "Storage link", "storage_success": "Laravel storage link created.",
-        "storage_failed": "Storage link failed", "about_title": "Laravel environment",
-        "about_failed": "Laravel diagnostics failed", "rollback_title": "Rollback update",
+        "storage_failed": "Storage link failed", "about_title": "Application information",
+        "about_heading": "Deployment environment", "about_help": "Laravel and runtime diagnostics from the installed application.",
+        "about_failed": "Laravel diagnostics failed", "copy": "Copy", "close": "Close", "copied": "Copied to clipboard",
+        "rollback_title": "Rollback update",
         "rollback_question": "Restore backup:\n{name}\n\nContinue?", "rollback_done": "Rollback completed",
         "rollback_done_title": "Rollback complete", "rollback_success": "The previous files were restored.",
         "rollback_failed": "Rollback failed",
@@ -65,7 +67,7 @@ INSTALLER_TEXT = {
         "commands_help": "ألغِ أي خطوة لا يحتاجها هذا التحديث. وضع الصيانة يُفعّل ويُلغى تلقائياً.",
         "no_optional": "لا توجد خطوات اختيارية في هذا النمط.", "live_heading": "سجل التحديث المباشر",
         "waiting": "بانتظار بدء التحديث...", "install": "تثبيت التحديث", "deploying": "جارٍ التحديث...",
-        "rollback": "استعادة النسخة السابقة", "storage_link": "إنشاء رابط ملفات التخزين", "laravel_about": "معلومات إطار العمل",
+        "rollback": "استعادة النسخة السابقة", "storage_link": "إنشاء رابط ملفات التخزين", "laravel_about": "معلومات التطبيق",
         "ready": "جاهز للتثبيت", "env_check": "فحص إعدادات البيئة", "readiness": "جاهزية التطبيق",
         "services": "الخدمات المطلوبة", "running": "تعمل", "not_running": "متوقفة",
         "installed": "الإصدار المثبت", "package": "الإصدار الجديد", "unknown": "غير معروف",
@@ -79,8 +81,10 @@ INSTALLER_TEXT = {
         "failed_status": "تعذر إكمال التحديث وتمت استعادة ملفات التطبيق", "failed_title": "فشل التحديث",
         "choose_first": "حدد مجلد النسخة المثبتة أولاً.", "folder_title": "اختيار مجلد التطبيق",
         "storage_title": "رابط ملفات التخزين", "storage_success": "تم إنشاء رابط ملفات التخزين بنجاح.",
-        "storage_failed": "تعذر إنشاء رابط التخزين", "about_title": "معلومات بيئة Laravel",
-        "about_failed": "تعذر قراءة معلومات Laravel", "rollback_title": "استعادة النسخة السابقة",
+        "storage_failed": "تعذر إنشاء رابط التخزين", "about_title": "معلومات التطبيق",
+        "about_heading": "بيئة تشغيل التطبيق", "about_help": "تفاصيل إطار العمل وبيئة التشغيل في النسخة المثبتة.",
+        "about_failed": "تعذر قراءة معلومات التطبيق", "copy": "نسخ", "close": "إغلاق", "copied": "تم النسخ",
+        "rollback_title": "استعادة النسخة السابقة",
         "rollback_question": "سيتم استعادة النسخة الاحتياطية:\n{name}\n\nهل تريد المتابعة؟",
         "rollback_done": "تمت استعادة النسخة السابقة", "rollback_done_title": "اكتملت الاستعادة",
         "rollback_success": "عادت ملفات التطبيق إلى حالتها السابقة.", "rollback_failed": "تعذرت استعادة النسخة السابقة",
@@ -750,9 +754,63 @@ class UpdaterApp(ctk.CTk):
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 creationflags=CREATE_NO_WINDOW,
             )
-            messagebox.showinfo(self.t("about_title"), result.stdout.strip())
+            self.show_app_info(result.stdout.strip())
         except Exception as error:
             messagebox.showerror(self.t("about_failed"), str(error))
+
+    def show_app_info(self, output: str) -> None:
+        modal = ctk.CTkToplevel(self)
+        modal.title(self.t("about_title"))
+        modal.configure(fg_color="#F3F6FA")
+        modal.transient(self)
+        modal.grid_columnconfigure(0, weight=1)
+        modal.grid_rowconfigure(1, weight=1)
+
+        width = min(900, self.winfo_screenwidth() - 80)
+        height = min(700, self.winfo_screenheight() - 80)
+        x = max(20, self.winfo_rootx() + (self.winfo_width() - width) // 2)
+        y = max(20, self.winfo_rooty() + (self.winfo_height() - height) // 2)
+        modal.geometry(f"{width}x{height}+{x}+{y}")
+        modal.minsize(680, 500)
+
+        anchor = "e" if self.language == "ar" else "w"
+        header = ctk.CTkFrame(modal, fg_color="#FFFFFF", corner_radius=0, height=90)
+        header.grid(row=0, column=0, sticky="ew")
+        header.grid_columnconfigure(1 if self.language == "ar" else 0, weight=1)
+        icon_column = 0 if self.language == "ar" else 1
+        text_column = 1 if self.language == "ar" else 0
+        text = ctk.CTkFrame(header, fg_color="transparent")
+        text.grid(row=0, column=text_column, sticky="ew", padx=24, pady=18)
+        ctk.CTkLabel(text, text=self.t("about_heading"), font=self.font(18, "bold"), text_color="#172B4D").pack(anchor=anchor)
+        ctk.CTkLabel(text, text=self.t("about_help"), font=self.font(10), text_color="#64748B").pack(anchor=anchor, pady=(3, 0))
+        ctk.CTkLabel(header, text="i", width=42, height=42, corner_radius=21, fg_color="#2563EB", text_color="#FFFFFF", font=ctk.CTkFont("Segoe UI", 20, "bold")).grid(row=0, column=icon_column, padx=24)
+
+        body = ctk.CTkFrame(modal, fg_color="#FFFFFF", corner_radius=14, border_width=1, border_color="#E2E8F0")
+        body.grid(row=1, column=0, sticky="nsew", padx=24, pady=18)
+        body.grid_columnconfigure(0, weight=1)
+        body.grid_rowconfigure(0, weight=1)
+        diagnostics = ctk.CTkTextbox(body, fg_color="#0F172A", text_color="#E2E8F0", font=ctk.CTkFont("Consolas", 11), wrap="word", corner_radius=10)
+        diagnostics.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
+        diagnostics.insert("1.0", "\n".join(ltr(line) for line in output.splitlines()))
+        diagnostics.configure(state="disabled")
+
+        footer = ctk.CTkFrame(modal, fg_color="transparent")
+        footer.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 20))
+        copied = ctk.CTkLabel(footer, text="", font=self.font(10), text_color="#16A34A")
+        copied.pack(side="left")
+
+        def copy_output() -> None:
+            self.clipboard_clear()
+            self.clipboard_append(output)
+            copied.configure(text=self.t("copied"))
+
+        ctk.CTkButton(footer, text=self.t("close"), command=modal.destroy, width=110, height=40, font=self.font(11, "bold")).pack(side="right")
+        ctk.CTkButton(footer, text=self.t("copy"), command=copy_output, width=110, height=40, fg_color="transparent", border_width=1, border_color="#CBD5E1", text_color="#334155", font=self.font(11)).pack(side="right", padx=10)
+        modal.bind("<Escape>", lambda _event: modal.destroy())
+        modal.protocol("WM_DELETE_WINDOW", modal.destroy)
+        modal.after(50, modal.grab_set)
+        modal.focus_force()
+        return modal
 
     def _reset_live_log(self) -> None:
         self.live_log.configure(state="normal")

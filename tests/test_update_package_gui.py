@@ -217,6 +217,8 @@ class UpdatePackageGuiTest(unittest.TestCase):
     def test_arabic_installer_uses_deployment_specific_wording(self):
         self.assertEqual(installer_text("ar", "install"), "تثبيت التحديث")
         self.assertIn("استعادة", installer_text("ar", "rollback"))
+        self.assertEqual(installer_text("ar", "about_heading"), "بيئة تشغيل التطبيق")
+        self.assertEqual(installer_text("ar", "copy"), "نسخ")
         self.assertEqual(installer_text("unsupported", "install"), "Install update")
 
         with tempfile.TemporaryDirectory() as temp:

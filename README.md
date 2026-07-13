@@ -23,6 +23,7 @@ target application, runs a deployment recipe, and verifies application health.
 - Record installed-version metadata and export timestamped deployment logs.
 - Stream package generation and deployment command output in live log panels.
 - Check Laravel readiness, its storage link, and configured local services.
+- View and copy `php artisan about` output in a themed diagnostics modal.
 - Prefill the client's application destination while keeping it editable.
 - Generate the updater interface in English or Arabic.
 - Let the operator choose the deployed application directory at install time.
