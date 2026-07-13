@@ -223,10 +223,12 @@ class UpdatePackageGuiTest(unittest.TestCase):
             summary = deployment_summary(Path(temp), {
                 "version": "2.7.0", "end": "abcdef123456", "included": ["public/build/app.js"],
                 "deleted": [], "changes": {"modified": 2, "added": 1}, "warnings": [],
+                "migrations": ["database/migrations/2026_07_14_create_reports_table.php"],
             }, "ar")
         self.assertIn("الإصدار الجديد", summary)
-        self.assertIn("\u200e2.7.0\u200e", summary)
+        self.assertIn("\u200e2.7.0 (abcdef12)\u200e", summary)
         self.assertIn("سيتم استبدال ملفات الواجهة", summary)
+        self.assertIn("\n• \u200e2026_07_14_create_reports_table.php\u200e", summary)
 
     def test_failed_health_check_rolls_back_files_and_allows_retry(self):
         with tempfile.TemporaryDirectory() as temp:

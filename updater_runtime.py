@@ -70,7 +70,7 @@ INSTALLER_TEXT = {
         "services": "الخدمات المطلوبة", "running": "تعمل", "not_running": "متوقفة",
         "installed": "الإصدار المثبت", "package": "الإصدار الجديد", "unknown": "غير معروف",
         "changes": "{modified} ملفاً معدلاً • {added} مضافاً • {deleted} محذوفاً",
-        "migrations": "ملفات ترحيل جديدة ({count}): {names}", "dependencies": "ملفات الاعتماد المتغيرة: {names}",
+        "migrations": "ملفات ترحيل جديدة ({count}):\n{names}", "dependencies": "ملفات الاعتماد المتغيرة:\n{names}",
         "build_changed": "سيتم استبدال ملفات الواجهة في {path}", "review_title": "تأكيد التحديث",
         "commands": "الخطوات المحددة", "no_commands": "• لا توجد خطوات إضافية محددة",
         "continue": "هل تريد بدء تحديث التطبيق؟", "validating": "جارٍ فحص التطبيق وتنفيذ التحديث...",
@@ -88,19 +88,19 @@ INSTALLER_TEXT = {
 }
 
 ARABIC_CHECKS = {
-    "PHP executable found": "تم العثور على PHP",
-    "artisan found": "ملف artisan موجود",
-    "vendor/autoload.php exists": "مكتبات Composer مثبتة",
-    "APP_KEY configured": "مفتاح التطبيق مضبوط",
-    "storage writable": "مجلد storage قابل للكتابة",
-    "bootstrap/cache writable": "مجلد bootstrap/cache قابل للكتابة",
-    "Laravel storage link valid": "رابط تخزين Laravel سليم",
+    "PHP executable found": "تم العثور على مفسّر: \u200ePHP\u200e",
+    "artisan found": "ملف التشغيل موجود: \u200eartisan\u200e",
+    "vendor/autoload.php exists": "مكتبات التطبيق مثبتة عبر: \u200eComposer\u200e",
+    "APP_KEY configured": "مفتاح التطبيق مضبوط: \u200eAPP_KEY\u200e",
+    "storage writable": "المجلد قابل للكتابة: \u200estorage\u200e",
+    "bootstrap/cache writable": "مجلد التخزين المؤقت قابل للكتابة: \u200ebootstrap/cache\u200e",
+    "Laravel storage link valid": "رابط ملفات التخزين سليم",
 }
 
 ARABIC_WARNINGS = {
-    "composer.lock changed: run composer install": "تغيرت مكتبات PHP؛ شغّل ‎composer install‎ إذا لم تكن مضمّنة في بيئة العميل.",
-    "package-lock.json changed: run npm ci": "تغيرت مكتبات الواجهة؛ شغّل ‎npm ci‎ عند بناء الواجهة على جهاز العميل.",
-    "Frontend dependencies changed but public/build is excluded; assets may be outdated": "تغيرت مكتبات الواجهة بينما ‎public/build‎ غير مضمن؛ قد تظهر واجهة قديمة بعد التحديث.",
+    "composer.lock changed: run composer install": "تغيرت مكتبات الخادم. شغّل الأمر عند الحاجة: \u200ecomposer install\u200e",
+    "package-lock.json changed: run npm ci": "تغيرت مكتبات الواجهة. شغّل الأمر عند بناء الواجهة محلياً: \u200enpm ci\u200e",
+    "Frontend dependencies changed but public/build is excluded; assets may be outdated": "قد تظهر واجهة قديمة لأن مجلد البناء غير مضمن: \u200epublic/build\u200e",
 }
 
 
@@ -333,18 +333,23 @@ def deployment_summary(installation: Path, manifest: dict, language: str = "en")
     installed_commit = installed.get("commit", "")
     package_commit = manifest.get("end", "")
     display = ltr if language == "ar" else str
+    installed_details = f"{installed.get('version') or unknown} ({installed_commit[:8] or unknown})"
+    package_details = f"{manifest.get('version') or unknown} ({package_commit[:8] or unknown})"
     lines = [
-        f"{installer_text(language, 'installed')}: {display(installed.get('version') or unknown)} ({display(installed_commit[:8] or unknown)})",
-        f"{installer_text(language, 'package')}: {display(manifest.get('version') or unknown)} ({display(package_commit[:8] or unknown)})",
+        f"{installer_text(language, 'installed')}: {display(installed_details)}",
+        f"{installer_text(language, 'package')}: {display(package_details)}",
         "",
         installer_text(language, "changes", modified=changes.get("modified", 0), added=changes.get("added", 0), deleted=len(manifest.get("deleted", []))),
     ]
     migrations = manifest.get("migrations", [])
     if migrations:
-        lines.append(installer_text(language, "migrations", count=display(len(migrations)), names=display(", ".join(Path(path).name for path in migrations))))
+        names = [Path(path).name for path in migrations]
+        migration_names = "\n".join(f"• {display(name)}" for name in names) if language == "ar" else ", ".join(names)
+        lines.append(installer_text(language, "migrations", count=len(migrations), names=migration_names))
     dependencies = manifest.get("dependencies", [])
     if dependencies:
-        lines.append(installer_text(language, "dependencies", names=display(", ".join(dependencies))))
+        dependency_names = "\n".join(f"• {display(name)}" for name in dependencies) if language == "ar" else ", ".join(dependencies)
+        lines.append(installer_text(language, "dependencies", names=dependency_names))
     if any(path.startswith("public/build/") for path in manifest.get("included", [])):
         lines.append(installer_text(language, "build_changed", path=display("public/build")))
     warnings = manifest.get("warnings", [])
@@ -710,7 +715,7 @@ class UpdaterApp(ctk.CTk):
             lines = [deployment_summary(installation, self.manifest, self.language), "", self.t("env_check")]
             missing = set(validate_environment(installation, self.manifest))
             for name in profile_for(self.manifest).get("required_env", []):
-                lines.append(f"{'✗' if name in missing else '✓'} {name}")
+                lines.append(f"{'✗' if name in missing else '✓'} {ltr(name) if self.language == 'ar' else name}")
             readiness = deployment_readiness(installation, self.manifest)
             if readiness:
                 lines.extend(["", self.t("readiness")])
@@ -718,7 +723,7 @@ class UpdaterApp(ctk.CTk):
             services = service_statuses(self.manifest)
             if services:
                 lines.extend(["", self.t("services")])
-                lines.extend(f"{self.t('running') if ok else self.t('not_running')}  {name}" for ok, name in services)
+                lines.extend(f"{self.t('running') if ok else self.t('not_running')}  {ltr(name) if self.language == 'ar' else name}" for ok, name in services)
             self.preview.configure(state="normal")
             self.preview.delete("1.0", "end")
             self.preview.insert("1.0", "\n".join(lines), "rtl" if self.language == "ar" else None)
@@ -770,7 +775,7 @@ class UpdaterApp(ctk.CTk):
             manifest = self.selected_manifest()
             commands = profile_for(manifest).get("before_commands", []) + profile_for(manifest).get("after_commands", [])
             summary = deployment_summary(installation, manifest, self.language)
-            command_summary = "\n".join(f"• {command}" for command in commands) or self.t("no_commands")
+            command_summary = "\n".join(f"• {ltr(command) if self.language == 'ar' else command}" for command in commands) or self.t("no_commands")
             if not messagebox.askyesno(self.t("review_title"), f"{summary}\n\n{self.t('commands')}:\n{command_summary}\n\n{self.t('continue')}"):
                 return
             self.status_var.set(self.t("validating"))
@@ -789,10 +794,11 @@ class UpdaterApp(ctk.CTk):
             self.after(0, self._install_failed, str(error))
 
     def _install_succeeded(self, _backup: Path, log: Path) -> None:
-        self.status_var.set(self.t("success_status", log=log))
+        display_log = ltr(log) if self.language == "ar" else log
+        self.status_var.set(self.t("success_status", log=display_log))
         self.install_button.configure(state="normal", text=self.t("install"))
         self.show_preview()
-        messagebox.showinfo(self.t("success_title"), self.t("success", log=log))
+        messagebox.showinfo(self.t("success_title"), self.t("success", log=display_log))
 
     def _install_failed(self, error: str) -> None:
         self._append_live_log(f"FAILED: {error}")
@@ -804,7 +810,8 @@ class UpdaterApp(ctk.CTk):
         try:
             installation = self.installation()
             backup = latest_backup(installation)
-            if not messagebox.askyesno(self.t("rollback_title"), self.t("rollback_question", name=backup.name)):
+            backup_name = ltr(backup.name) if self.language == "ar" else backup.name
+            if not messagebox.askyesno(self.t("rollback_title"), self.t("rollback_question", name=backup_name)):
                 return
             rollback_from(installation, backup)
             shutil.rmtree(backup)
