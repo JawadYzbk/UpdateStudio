@@ -23,6 +23,7 @@ VERSION_PATTERN = re.compile(
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+INSTALLER_LANGUAGES = {"English": "en", "العربية": "ar"}
 
 PROTECTED_DEFAULTS = [
     {"path": ".env", "mode": "preserve_if_exists"},
@@ -95,6 +96,13 @@ def validate_env_variable(value: str) -> str:
     value = value.strip()
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
         raise ValueError("Version variable must be a valid environment name, for example APP_VERSION.")
+    return value
+
+
+def validate_destination(value: str) -> str:
+    value = value.strip()
+    if value and not os.path.isabs(value):
+        raise ValueError("Default destination must be an absolute path, for example C:\\inetpub\\wwwroot\\app.")
     return value
 
 
@@ -301,6 +309,11 @@ def build_updater_exe(
     }
     resource_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     updater_source = resource_root / "updater_runtime.py"
+    arabic_font = resource_root / "assets" / "fonts" / "NotoSansArabic.ttf"
+    arabic_semibold_font = resource_root / "assets" / "fonts" / "NotoSansArabic-SemiBold.ttf"
+    arabic_font_license = resource_root / "assets" / "fonts" / "NotoSansArabic-OFL.txt"
+    if profile and profile.get("language") == "ar" and not all(path.is_file() for path in (arabic_font, arabic_semibold_font, arabic_font_license)):
+        raise FileNotFoundError("Arabic font asset is missing. Rebuild Update Studio with assets/fonts included.")
     python = shutil.which("python") if getattr(sys, "frozen", False) else sys.executable
     if not python or subprocess.run(
         [python, "-c", "import PyInstaller"],
@@ -333,6 +346,7 @@ def build_updater_exe(
                 "--specpath", str(staging / "spec"),
                 "--add-data", f"{payload}{os.pathsep}.",
                 "--add-data", f"{manifest_path}{os.pathsep}.",
+                *( ["--add-data", f"{arabic_font}{os.pathsep}.", "--add-data", f"{arabic_semibold_font}{os.pathsep}.", "--add-data", f"{arabic_font_license}{os.pathsep}."] if profile and profile.get("language") == "ar" else [] ),
                 str(updater_source),
             ],
             stdout=subprocess.PIPE,
@@ -377,6 +391,8 @@ class UpdatePackageApp(ctk.CTk):
         self.application_var = tk.StringVar(value=self.repo.name)
         self.version_var = tk.StringVar()
         self.version_variable_var = tk.StringVar(value="APP_VERSION")
+        self.destination_var = tk.StringVar()
+        self.installer_language_var = tk.StringVar(value="English")
         self.required_env_var = tk.StringVar()
         self.health_url_var = tk.StringVar()
         self.health_status_var = tk.StringVar(value="200")
@@ -451,13 +467,19 @@ class UpdatePackageApp(ctk.CTk):
         ctk.CTkComboBox(deploy, variable=self.profile_var, values=list(DEPLOYMENT_PRESETS), state="readonly", height=34).grid(row=3, column=0, sticky="ew", padx=14)
         self._text_field(deploy, 2, 1, "Version .env variable", self.version_variable_var, "APP_VERSION")
         self._text_field(deploy, 3, 1, "Required .env names", self.required_env_var, "APP_KEY, REDIS_HOST")
-        self._text_field(deploy, 4, 0, "Health URL", self.health_url_var, "http://localhost/api/health")
-        self._text_field(deploy, 4, 1, "Expected status", self.health_status_var)
-        self._text_field(deploy, 5, 0, "Extra before commands", self.before_commands_var, "one; command; per semicolon")
-        self._text_field(deploy, 5, 1, "Extra after commands", self.after_commands_var, "one; command; per semicolon")
-        self._text_field(deploy, 6, 0, "Protected paths", self.protected_paths_var, "mode:path; mode:path")
-        self._text_field(deploy, 6, 1, "Required services", self.services_var, "MySQL:127.0.0.1:3306")
-        ctk.CTkLabel(deploy, text="Protected modes: never_overwrite, never_delete, preserve_if_exists", font=ctk.CTkFont("Segoe UI", 9), text_color="#64748B").grid(row=7, column=0, columnspan=2, sticky="w", padx=14, pady=(4, 12))
+        self._text_field(deploy, 4, 0, "Default app destination", self.destination_var, "C:\\inetpub\\wwwroot\\app")
+        language_box = ctk.CTkFrame(deploy, fg_color="transparent")
+        language_box.grid(row=4, column=1, sticky="ew", padx=14, pady=3)
+        language_box.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(language_box, text="Installer language", font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color="#475569").grid(row=0, column=0, sticky="w", pady=(0, 3))
+        ctk.CTkComboBox(language_box, variable=self.installer_language_var, values=list(INSTALLER_LANGUAGES), state="readonly", height=34).grid(row=1, column=0, sticky="ew")
+        self._text_field(deploy, 5, 0, "Health URL", self.health_url_var, "http://localhost/api/health")
+        self._text_field(deploy, 5, 1, "Expected status", self.health_status_var)
+        self._text_field(deploy, 6, 0, "Extra before commands", self.before_commands_var, "one; command; per semicolon")
+        self._text_field(deploy, 6, 1, "Extra after commands", self.after_commands_var, "one; command; per semicolon")
+        self._text_field(deploy, 7, 0, "Protected paths", self.protected_paths_var, "mode:path; mode:path")
+        self._text_field(deploy, 7, 1, "Required services", self.services_var, "MySQL:127.0.0.1:3306")
+        ctk.CTkLabel(deploy, text="Protected modes: never_overwrite, never_delete, preserve_if_exists", font=ctk.CTkFont("Segoe UI", 9), text_color="#64748B").grid(row=8, column=0, columnspan=2, sticky="w", padx=14, pady=(4, 12))
 
         actions = ctk.CTkFrame(main, fg_color="transparent")
         actions.grid(row=1, column=0, sticky="ew", padx=22, pady=(10, 18))
@@ -568,7 +590,9 @@ class UpdatePackageApp(ctk.CTk):
         try:
             version = validate_version(self.version_var.get())
             profile["version_variable"] = validate_env_variable(self.version_variable_var.get())
-        except ValueError as error:
+            profile["default_destination"] = validate_destination(self.destination_var.get())
+            profile["language"] = INSTALLER_LANGUAGES[self.installer_language_var.get()]
+        except (KeyError, ValueError) as error:
             messagebox.showwarning("Invalid application version", str(error))
             return
         self.status_var.set("Generating...")

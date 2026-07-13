@@ -4,6 +4,7 @@ import json
 import os
 import fnmatch
 import re
+import ctypes
 import shutil
 import socket
 import subprocess
@@ -23,6 +24,88 @@ import customtkinter as ctk
 BACKUP_DIR = ".update_backups"
 STUDIO_DIR = ".update_studio"
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
+INSTALLER_TEXT = {
+    "en": {
+        "title": "Application Update", "heading": "Application update",
+        "release": "Release {start} → {end}   •   {count} files",
+        "choose": "Choose installation", "choose_help": "Select the root folder of the deployed application.",
+        "browse": "Browse", "review": "Review", "commands_tab": "Commands", "log_tab": "Live log",
+        "choose_review": "Choose the deployed application to review this update.",
+        "commands_heading": "Commands to run",
+        "commands_help": "Uncheck commands this deployment does not need. Laravel maintenance enter/exit always runs.",
+        "no_optional": "No optional commands in this profile.", "live_heading": "Live deployment log",
+        "waiting": "Waiting to start deployment...", "install": "Install update", "deploying": "Deploying...",
+        "rollback": "Rollback latest", "storage_link": "Create storage link", "laravel_about": "Laravel about",
+        "ready": "Ready to install", "env_check": "Environment validation", "readiness": "Deployment readiness",
+        "services": "Required services", "running": "Running", "not_running": "Not running",
+        "installed": "Installed", "package": "Package", "unknown": "Unknown",
+        "changes": "{modified} modified • {added} added • {deleted} deleted",
+        "migrations": "{count} migration(s) added: {names}", "dependencies": "Dependencies changed: {names}",
+        "build_changed": "{path} changed", "review_title": "Review update", "commands": "Commands",
+        "no_commands": "• No commands selected", "continue": "Continue with deployment?",
+        "validating": "Validating and deploying...", "success_status": "Installed successfully. Log: {log}",
+        "success_title": "Deployment complete", "success": "The application passed deployment checks.\n\nLog: {log}",
+        "failed_status": "Deployment failed; application files were restored", "failed_title": "Update failed",
+        "choose_first": "Choose the deployed application folder first.", "folder_title": "Choose deployed application folder",
+        "storage_title": "Storage link", "storage_success": "Laravel storage link created.",
+        "storage_failed": "Storage link failed", "about_title": "Laravel environment",
+        "about_failed": "Laravel diagnostics failed", "rollback_title": "Rollback update",
+        "rollback_question": "Restore backup:\n{name}\n\nContinue?", "rollback_done": "Rollback completed",
+        "rollback_done_title": "Rollback complete", "rollback_success": "The previous files were restored.",
+        "rollback_failed": "Rollback failed",
+    },
+    "ar": {
+        "title": "تحديث التطبيق", "heading": "تحديث التطبيق",
+        "release": "من {start} إلى {end}   •   عدد الملفات: {count}",
+        "choose": "حدد مجلد التطبيق", "choose_help": "يمكنك اعتماد المسار المقترح أو اختيار مكان النسخة المثبتة.",
+        "browse": "اختيار", "review": "مراجعة التحديث", "commands_tab": "خطوات النشر", "log_tab": "سجل التنفيذ",
+        "choose_review": "حدد مجلد التطبيق لعرض تفاصيل التحديث قبل البدء.",
+        "commands_heading": "الخطوات التي ستُنفّذ",
+        "commands_help": "ألغِ أي خطوة لا يحتاجها هذا التحديث. وضع الصيانة يُفعّل ويُلغى تلقائياً.",
+        "no_optional": "لا توجد خطوات اختيارية في هذا النمط.", "live_heading": "سجل التحديث المباشر",
+        "waiting": "بانتظار بدء التحديث...", "install": "تثبيت التحديث", "deploying": "جارٍ التحديث...",
+        "rollback": "استعادة النسخة السابقة", "storage_link": "إنشاء رابط ملفات التخزين", "laravel_about": "معلومات إطار العمل",
+        "ready": "جاهز للتثبيت", "env_check": "فحص إعدادات البيئة", "readiness": "جاهزية التطبيق",
+        "services": "الخدمات المطلوبة", "running": "تعمل", "not_running": "متوقفة",
+        "installed": "الإصدار المثبت", "package": "الإصدار الجديد", "unknown": "غير معروف",
+        "changes": "{modified} ملفاً معدلاً • {added} مضافاً • {deleted} محذوفاً",
+        "migrations": "ملفات ترحيل جديدة ({count}): {names}", "dependencies": "ملفات الاعتماد المتغيرة: {names}",
+        "build_changed": "سيتم استبدال ملفات الواجهة في {path}", "review_title": "تأكيد التحديث",
+        "commands": "الخطوات المحددة", "no_commands": "• لا توجد خطوات إضافية محددة",
+        "continue": "هل تريد بدء تحديث التطبيق؟", "validating": "جارٍ فحص التطبيق وتنفيذ التحديث...",
+        "success_status": "اكتمل تحديث التطبيق بنجاح", "success_title": "اكتمل التحديث",
+        "success": "تم تحديث التطبيق واجتاز فحص التشغيل.\n\nسجل التنفيذ: {log}",
+        "failed_status": "تعذر إكمال التحديث وتمت استعادة ملفات التطبيق", "failed_title": "فشل التحديث",
+        "choose_first": "حدد مجلد النسخة المثبتة أولاً.", "folder_title": "اختيار مجلد التطبيق",
+        "storage_title": "رابط ملفات التخزين", "storage_success": "تم إنشاء رابط ملفات التخزين بنجاح.",
+        "storage_failed": "تعذر إنشاء رابط التخزين", "about_title": "معلومات بيئة Laravel",
+        "about_failed": "تعذر قراءة معلومات Laravel", "rollback_title": "استعادة النسخة السابقة",
+        "rollback_question": "سيتم استعادة النسخة الاحتياطية:\n{name}\n\nهل تريد المتابعة؟",
+        "rollback_done": "تمت استعادة النسخة السابقة", "rollback_done_title": "اكتملت الاستعادة",
+        "rollback_success": "عادت ملفات التطبيق إلى حالتها السابقة.", "rollback_failed": "تعذرت استعادة النسخة السابقة",
+    },
+}
+
+ARABIC_CHECKS = {
+    "PHP executable found": "تم العثور على PHP",
+    "artisan found": "ملف artisan موجود",
+    "vendor/autoload.php exists": "مكتبات Composer مثبتة",
+    "APP_KEY configured": "مفتاح التطبيق مضبوط",
+    "storage writable": "مجلد storage قابل للكتابة",
+    "bootstrap/cache writable": "مجلد bootstrap/cache قابل للكتابة",
+    "Laravel storage link valid": "رابط تخزين Laravel سليم",
+}
+
+ARABIC_WARNINGS = {
+    "composer.lock changed: run composer install": "تغيرت مكتبات PHP؛ شغّل ‎composer install‎ إذا لم تكن مضمّنة في بيئة العميل.",
+    "package-lock.json changed: run npm ci": "تغيرت مكتبات الواجهة؛ شغّل ‎npm ci‎ عند بناء الواجهة على جهاز العميل.",
+    "Frontend dependencies changed but public/build is excluded; assets may be outdated": "تغيرت مكتبات الواجهة بينما ‎public/build‎ غير مضمن؛ قد تظهر واجهة قديمة بعد التحديث.",
+}
+
+
+def installer_text(language: str, key: str, **values) -> str:
+    return INSTALLER_TEXT.get(language, INSTALLER_TEXT["en"])[key].format(**values)
 
 
 class DeploymentError(RuntimeError):
@@ -52,6 +135,22 @@ class DeploymentLog:
 def resource_path(name: str) -> Path:
     root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     return root / name
+
+
+def register_arabic_font() -> str:
+    if os.name != "nt":
+        return "Segoe UI"
+    regular = next((path for path in [resource_path("NotoSansArabic.ttf"), resource_path("assets/fonts/NotoSansArabic.ttf")] if path.is_file()), None)
+    semibold = next((path for path in [resource_path("NotoSansArabic-SemiBold.ttf"), resource_path("assets/fonts/NotoSansArabic-SemiBold.ttf")] if path.is_file()), None)
+    if regular and ctypes.windll.gdi32.AddFontResourceExW(str(regular), 0x10, 0):
+        if semibold:
+            ctypes.windll.gdi32.AddFontResourceExW(str(semibold), 0x10, 0)
+        return "Noto Sans Arabic"
+    return "Segoe UI"
+
+
+def ltr(value) -> str:
+    return f"\u200e{value}\u200e"
 
 
 def safe_path(root: Path, relative: str) -> Path:
@@ -226,25 +325,32 @@ def service_statuses(manifest: dict) -> list[tuple[bool, str]]:
     return statuses
 
 
-def deployment_summary(installation: Path, manifest: dict) -> str:
+def deployment_summary(installation: Path, manifest: dict, language: str = "en") -> str:
     metadata_path = installation / STUDIO_DIR / "deployment.json"
     installed = json.loads(metadata_path.read_text(encoding="utf-8")) if metadata_path.is_file() else {}
     changes = manifest.get("changes", {})
+    unknown = installer_text(language, "unknown")
+    installed_commit = installed.get("commit", "")
+    package_commit = manifest.get("end", "")
+    display = ltr if language == "ar" else str
     lines = [
-        f"Installed: {installed.get('version', 'Unknown')} ({installed.get('commit', 'unknown')[:8]})",
-        f"Package: {manifest.get('version', 'Unknown')} ({manifest.get('end', 'unknown')[:8]})",
+        f"{installer_text(language, 'installed')}: {display(installed.get('version') or unknown)} ({display(installed_commit[:8] or unknown)})",
+        f"{installer_text(language, 'package')}: {display(manifest.get('version') or unknown)} ({display(package_commit[:8] or unknown)})",
         "",
-        f"{changes.get('modified', 0)} modified • {changes.get('added', 0)} added • {len(manifest.get('deleted', []))} deleted",
+        installer_text(language, "changes", modified=changes.get("modified", 0), added=changes.get("added", 0), deleted=len(manifest.get("deleted", []))),
     ]
     migrations = manifest.get("migrations", [])
     if migrations:
-        lines.append(f"{len(migrations)} migration(s) added: {', '.join(Path(path).name for path in migrations)}")
+        lines.append(installer_text(language, "migrations", count=display(len(migrations)), names=display(", ".join(Path(path).name for path in migrations))))
     dependencies = manifest.get("dependencies", [])
     if dependencies:
-        lines.append("Dependencies changed: " + ", ".join(dependencies))
+        lines.append(installer_text(language, "dependencies", names=display(", ".join(dependencies))))
     if any(path.startswith("public/build/") for path in manifest.get("included", [])):
-        lines.append("public/build changed")
-    lines.extend(manifest.get("warnings", []))
+        lines.append(installer_text(language, "build_changed", path=display("public/build")))
+    warnings = manifest.get("warnings", [])
+    if language == "ar":
+        warnings = [ARABIC_WARNINGS.get(warning, warning) for warning in warnings]
+    lines.extend(warnings)
     return "\n".join(lines)
 
 
@@ -470,57 +576,78 @@ class UpdaterApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
         self.manifest = load_manifest()
+        self.profile = profile_for(self.manifest)
+        self.language = self.profile.get("language", "en")
+        if self.language not in INSTALLER_TEXT:
+            self.language = "en"
+        self.font_family = register_arabic_font() if self.language == "ar" else "Segoe UI"
         self.payload = resource_path("payload.zip")
-        self.installation_var = tk.StringVar()
-        self.status_var = tk.StringVar(value="Ready to install")
-        self.title(self.manifest.get("title", "Application Update"))
-        self.geometry("780x760")
-        self.minsize(720, 680)
+        self.installation_var = tk.StringVar(value=self.profile.get("default_destination", ""))
+        self.status_var = tk.StringVar(value=self.t("ready"))
+        self.title(self.t("title"))
+        self.geometry("780x720" if self.language == "ar" else "780x760")
+        self.minsize(720, 640 if self.language == "ar" else 680)
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
         self.configure(fg_color="#F3F6FA")
         self._build()
 
+    def t(self, key: str, **values) -> str:
+        return installer_text(self.language, key, **values)
+
+    def font(self, size: int, weight: str = "normal"):
+        if self.language == "ar" and self.font_family == "Noto Sans Arabic" and weight == "bold":
+            return ctk.CTkFont("Noto Sans Arabic SemBd", size + 2)
+        return ctk.CTkFont(self.font_family, size + (2 if self.language == "ar" else 0), weight)
+
     def _build(self) -> None:
+        compact = self.language == "ar"
         root = ctk.CTkFrame(self, fg_color="transparent")
-        root.pack(fill="both", expand=True, padx=30, pady=28)
+        root.pack(fill="both", expand=True, padx=22 if compact else 30, pady=14 if compact else 28)
         root.grid_columnconfigure(0, weight=1)
         root.grid_rowconfigure(2, weight=1)
-        ctk.CTkLabel(root, text="Application update", font=ctk.CTkFont("Segoe UI", 27, "bold"), text_color="#172B4D").grid(row=0, column=0, sticky="w")
+        anchor = "e" if self.language == "ar" else "w"
+        ctk.CTkLabel(root, text=self.t("heading"), font=self.font(23 if compact else 27, "bold"), text_color="#172B4D").grid(row=0, column=0, sticky=anchor)
         ctk.CTkLabel(
             root,
-            text=f"Release {self.manifest['start'][:8]}  →  {self.manifest['end'][:8]}   •   {len(self.manifest['included'])} files",
-            font=ctk.CTkFont("Segoe UI", 12),
+            text=self.t("release", start=ltr(self.manifest["start"][:8]), end=ltr(self.manifest["end"][:8]), count=ltr(len(self.manifest["included"]))),
+            font=self.font(12),
             text_color="#64748B",
-        ).grid(row=1, column=0, sticky="w", pady=(4, 20))
+        ).grid(row=1, column=0, sticky=anchor, pady=(2 if compact else 4, 10 if compact else 20))
 
         card = ctk.CTkFrame(root, fg_color="#FFFFFF", corner_radius=16, border_width=1, border_color="#E2E8F0")
         card.grid(row=2, column=0, sticky="nsew")
         card.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(card, text="Choose installation", font=ctk.CTkFont("Segoe UI", 16, "bold"), text_color="#1E293B").grid(row=0, column=0, sticky="w", padx=24, pady=(24, 4))
-        ctk.CTkLabel(card, text="Select the root folder of the deployed application.", font=ctk.CTkFont("Segoe UI", 11), text_color="#64748B").grid(row=1, column=0, sticky="w", padx=24)
+        card.grid_rowconfigure(3, weight=1)
+        ctk.CTkLabel(card, text=self.t("choose"), font=self.font(16, "bold"), text_color="#1E293B").grid(row=0, column=0, sticky=anchor, padx=24, pady=(14 if compact else 24, 2 if compact else 4))
+        ctk.CTkLabel(card, text=self.t("choose_help"), font=self.font(11), text_color="#64748B").grid(row=1, column=0, sticky=anchor, padx=24)
 
         folder = ctk.CTkFrame(card, fg_color="transparent")
-        folder.grid(row=2, column=0, sticky="ew", padx=24, pady=(18, 16))
+        folder.grid(row=2, column=0, sticky="ew", padx=24, pady=(10 if compact else 18, 10 if compact else 16))
         folder.grid_columnconfigure(0, weight=1)
-        ctk.CTkEntry(folder, textvariable=self.installation_var, height=44, corner_radius=10, border_color="#CBD5E1", fg_color="#F8FAFC", placeholder_text="C:\\path\\to\\application").grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(folder, text="Browse", command=self.choose_folder, width=90, height=44, corner_radius=10, fg_color="#E2E8F0", hover_color="#CBD5E1", text_color="#334155").grid(row=0, column=1, padx=(10, 0))
+        ctk.CTkEntry(folder, textvariable=self.installation_var, height=44, corner_radius=10, border_color="#CBD5E1", fg_color="#F8FAFC", placeholder_text="C:\\path\\to\\application", justify="left").grid(row=0, column=0, sticky="ew")
+        ctk.CTkButton(folder, text=self.t("browse"), command=self.choose_folder, width=90, height=44, corner_radius=10, fg_color="#E2E8F0", hover_color="#CBD5E1", text_color="#334155", font=self.font(11)).grid(row=0, column=1, padx=(10, 0))
 
-        self.details = ctk.CTkTabview(card, height=290, fg_color="#F8FAFC", segmented_button_selected_color="#2563EB")
-        self.details.grid(row=3, column=0, sticky="ew", padx=24, pady=(0, 14))
-        review_tab = self.details.add("Review")
-        commands_tab = self.details.add("Commands")
-        log_tab = self.details.add("Live log")
+        self.details = ctk.CTkTabview(card, height=220 if compact else 290, fg_color="#F8FAFC", segmented_button_selected_color="#2563EB")
+        self.details._segmented_button.configure(font=self.font(11, "bold"))
+        self.details.grid(row=3, column=0, sticky="nsew", padx=24, pady=(0, 10 if compact else 14))
+        self.review_tab_name = self.t("review")
+        self.commands_tab_name = self.t("commands_tab")
+        self.log_tab_name = self.t("log_tab")
+        review_tab = self.details.add(self.review_tab_name)
+        commands_tab = self.details.add(self.commands_tab_name)
+        log_tab = self.details.add(self.log_tab_name)
 
-        self.preview = ctk.CTkTextbox(review_tab, corner_radius=10, fg_color="#F8FAFC", text_color="#334155", font=ctk.CTkFont("Consolas", 10))
+        self.preview = ctk.CTkTextbox(review_tab, corner_radius=10, fg_color="#F8FAFC", text_color="#334155", font=self.font(11) if self.language == "ar" else ctk.CTkFont("Consolas", 10), wrap="word")
         self.preview.pack(fill="both", expand=True, padx=4, pady=4)
-        self.preview.insert("1.0", "Choose the deployed application to review this update.")
+        self.preview.tag_config("rtl", justify="right", rmargin=8)
+        self.preview.insert("1.0", self.t("choose_review"), "rtl" if self.language == "ar" else None)
         self.preview.configure(state="disabled")
 
         command_card = ctk.CTkFrame(commands_tab, fg_color="transparent")
         command_card.pack(fill="both", expand=True)
-        ctk.CTkLabel(command_card, text="Commands to run", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#334155").pack(anchor="w", padx=14, pady=(10, 2))
-        ctk.CTkLabel(command_card, text="Uncheck commands this deployment does not need. Laravel maintenance enter/exit always runs.", font=ctk.CTkFont("Segoe UI", 9), text_color="#64748B").pack(anchor="w", padx=14, pady=(0, 5))
+        ctk.CTkLabel(command_card, text=self.t("commands_heading"), font=self.font(11, "bold"), text_color="#334155").pack(anchor=anchor, padx=14, pady=(10, 2))
+        ctk.CTkLabel(command_card, text=self.t("commands_help"), font=self.font(9), text_color="#64748B").pack(anchor=anchor, padx=14, pady=(0, 5))
         command_list = ctk.CTkScrollableFrame(command_card, fg_color="transparent")
         command_list.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.command_vars: dict[tuple[str, int], tk.BooleanVar] = {}
@@ -534,35 +661,35 @@ class UpdaterApp(ctk.CTk):
                 ctk.CTkCheckBox(command_list, text=command, variable=variable, height=24, checkbox_width=18, checkbox_height=18, font=ctk.CTkFont("Consolas", 10)).pack(anchor="w", padx=4, pady=2)
                 selectable += 1
         if not selectable:
-            ctk.CTkLabel(command_list, text="No optional commands in this profile.", text_color="#94A3B8", font=ctk.CTkFont("Segoe UI", 10)).pack(anchor="w", padx=4, pady=4)
+            ctk.CTkLabel(command_list, text=self.t("no_optional"), text_color="#94A3B8", font=self.font(10)).pack(anchor=anchor, padx=4, pady=4)
 
         log_card = ctk.CTkFrame(log_tab, fg_color="#111C2F", corner_radius=12)
         log_card.pack(fill="both", expand=True, padx=4, pady=4)
-        ctk.CTkLabel(log_card, text="Live deployment log", font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#BFDBFE").pack(anchor="w", padx=14, pady=(10, 2))
+        ctk.CTkLabel(log_card, text=self.t("live_heading"), font=self.font(11, "bold"), text_color="#BFDBFE").pack(anchor=anchor, padx=14, pady=(10, 2))
         self.live_log = ctk.CTkTextbox(log_card, fg_color="transparent", text_color="#CBD5E1", font=ctk.CTkFont("Consolas", 9), wrap="word")
         self.live_log.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.live_log.insert("1.0", "Waiting to start deployment...\n")
+        self.live_log.insert("1.0", self.t("waiting") + "\n")
         self.live_log.configure(state="disabled")
 
         actions = ctk.CTkFrame(card, fg_color="transparent")
         actions.grid(row=4, column=0, sticky="ew", padx=24)
-        self.install_button = ctk.CTkButton(actions, text="Install update", command=self.install, height=44, corner_radius=10, fg_color="#2563EB", hover_color="#1D4ED8", font=ctk.CTkFont("Segoe UI", 12, "bold"))
+        self.install_button = ctk.CTkButton(actions, text=self.t("install"), command=self.install, height=44, corner_radius=10, fg_color="#2563EB", hover_color="#1D4ED8", font=self.font(12, "bold"))
         self.install_button.pack(side="left")
-        ctk.CTkButton(actions, text="Rollback latest", command=self.rollback, height=44, corner_radius=10, fg_color="transparent", hover_color="#FEF2F2", border_width=1, border_color="#CBD5E1", text_color="#B91C1C").pack(side="left", padx=10)
+        ctk.CTkButton(actions, text=self.t("rollback"), command=self.rollback, height=44, corner_radius=10, fg_color="transparent", hover_color="#FEF2F2", border_width=1, border_color="#CBD5E1", text_color="#B91C1C", font=self.font(11)).pack(side="left", padx=10)
         if profile_for(self.manifest).get("laravel"):
-            ctk.CTkButton(actions, text="Create storage link", command=self.create_storage_link, height=44, corner_radius=10, fg_color="transparent", border_width=1, border_color="#CBD5E1", text_color="#334155").pack(side="left")
-            ctk.CTkButton(actions, text="Laravel about", command=self.laravel_about, height=44, corner_radius=10, fg_color="transparent", border_width=1, border_color="#CBD5E1", text_color="#334155").pack(side="left", padx=(10, 0))
-        ctk.CTkLabel(card, textvariable=self.status_var, height=34, corner_radius=9, fg_color="#F8FAFC", text_color="#475569", font=ctk.CTkFont("Segoe UI", 10)).grid(row=5, column=0, sticky="ew", padx=24, pady=(18, 24))
+            ctk.CTkButton(actions, text=self.t("storage_link"), command=self.create_storage_link, height=44, corner_radius=10, fg_color="transparent", border_width=1, border_color="#CBD5E1", text_color="#334155", font=self.font(10)).pack(side="left")
+            ctk.CTkButton(actions, text=self.t("laravel_about"), command=self.laravel_about, height=44, corner_radius=10, fg_color="transparent", border_width=1, border_color="#CBD5E1", text_color="#334155", font=self.font(10)).pack(side="left", padx=(10, 0))
+        ctk.CTkLabel(card, textvariable=self.status_var, height=34, corner_radius=9, fg_color="#F8FAFC", text_color="#475569", font=self.font(10)).grid(row=5, column=0, sticky="ew", padx=24, pady=(10 if compact else 18, 14 if compact else 24))
 
     def choose_folder(self) -> None:
-        selected = filedialog.askdirectory(title="Choose deployed application folder")
+        selected = filedialog.askdirectory(title=self.t("folder_title"), initialdir=self.installation_var.get() or None)
         if selected:
             self.installation_var.set(selected)
             self.show_preview()
 
     def installation(self) -> Path:
         if not self.installation_var.get().strip():
-            raise ValueError("Choose the deployed application folder first.")
+            raise ValueError(self.t("choose_first"))
         return Path(self.installation_var.get())
 
     def selected_manifest(self) -> dict:
@@ -580,21 +707,21 @@ class UpdaterApp(ctk.CTk):
     def show_preview(self) -> None:
         try:
             installation = self.installation().resolve()
-            lines = [deployment_summary(installation, self.manifest), "", "Environment validation"]
+            lines = [deployment_summary(installation, self.manifest, self.language), "", self.t("env_check")]
             missing = set(validate_environment(installation, self.manifest))
             for name in profile_for(self.manifest).get("required_env", []):
                 lines.append(f"{'✗' if name in missing else '✓'} {name}")
             readiness = deployment_readiness(installation, self.manifest)
             if readiness:
-                lines.extend(["", "Deployment readiness"])
-                lines.extend(f"{'✓' if ok else '✗'} {label}" for ok, label in readiness)
+                lines.extend(["", self.t("readiness")])
+                lines.extend(f"{'✓' if ok else '✗'} {ARABIC_CHECKS.get(label, label) if self.language == 'ar' else label}" for ok, label in readiness)
             services = service_statuses(self.manifest)
             if services:
-                lines.extend(["", "Required services"])
-                lines.extend(f"{'Running' if ok else 'Not running'}  {name}" for ok, name in services)
+                lines.extend(["", self.t("services")])
+                lines.extend(f"{self.t('running') if ok else self.t('not_running')}  {name}" for ok, name in services)
             self.preview.configure(state="normal")
             self.preview.delete("1.0", "end")
-            self.preview.insert("1.0", "\n".join(lines))
+            self.preview.insert("1.0", "\n".join(lines), "rtl" if self.language == "ar" else None)
             self.preview.configure(state="disabled")
         except Exception as error:
             self.status_var.set(str(error))
@@ -606,9 +733,9 @@ class UpdaterApp(ctk.CTk):
             run_command("php artisan storage:link", installation, log)
             log.save()
             self.show_preview()
-            messagebox.showinfo("Storage link", "Laravel storage link created.")
+            messagebox.showinfo(self.t("storage_title"), self.t("storage_success"))
         except Exception as error:
-            messagebox.showerror("Storage link failed", str(error))
+            messagebox.showerror(self.t("storage_failed"), str(error))
 
     def laravel_about(self) -> None:
         try:
@@ -618,9 +745,9 @@ class UpdaterApp(ctk.CTk):
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 creationflags=CREATE_NO_WINDOW,
             )
-            messagebox.showinfo("Laravel environment", result.stdout.strip())
+            messagebox.showinfo(self.t("about_title"), result.stdout.strip())
         except Exception as error:
-            messagebox.showerror("Laravel diagnostics failed", str(error))
+            messagebox.showerror(self.t("about_failed"), str(error))
 
     def _reset_live_log(self) -> None:
         self.live_log.configure(state="normal")
@@ -642,14 +769,14 @@ class UpdaterApp(ctk.CTk):
             self.show_preview()
             manifest = self.selected_manifest()
             commands = profile_for(manifest).get("before_commands", []) + profile_for(manifest).get("after_commands", [])
-            summary = deployment_summary(installation, manifest)
-            command_summary = "\n".join(f"• {command}" for command in commands) or "• No commands selected"
-            if not messagebox.askyesno("Review update", f"{summary}\n\nCommands:\n{command_summary}\n\nContinue with deployment?"):
+            summary = deployment_summary(installation, manifest, self.language)
+            command_summary = "\n".join(f"• {command}" for command in commands) or self.t("no_commands")
+            if not messagebox.askyesno(self.t("review_title"), f"{summary}\n\n{self.t('commands')}:\n{command_summary}\n\n{self.t('continue')}"):
                 return
-            self.status_var.set("Validating and deploying...")
-            self.install_button.configure(state="disabled", text="Deploying...")
+            self.status_var.set(self.t("validating"))
+            self.install_button.configure(state="disabled", text=self.t("deploying"))
             self._reset_live_log()
-            self.details.set("Live log")
+            self.details.set(self.log_tab_name)
             threading.Thread(target=self._install_worker, args=(installation, manifest), daemon=True).start()
         except Exception as error:
             self._install_failed(str(error))
@@ -662,30 +789,30 @@ class UpdaterApp(ctk.CTk):
             self.after(0, self._install_failed, str(error))
 
     def _install_succeeded(self, _backup: Path, log: Path) -> None:
-        self.status_var.set(f"Installed successfully. Log: {log}")
-        self.install_button.configure(state="normal", text="Install update")
+        self.status_var.set(self.t("success_status", log=log))
+        self.install_button.configure(state="normal", text=self.t("install"))
         self.show_preview()
-        messagebox.showinfo("Deployment complete", f"The application passed deployment checks.\n\nLog: {log}")
+        messagebox.showinfo(self.t("success_title"), self.t("success", log=log))
 
     def _install_failed(self, error: str) -> None:
         self._append_live_log(f"FAILED: {error}")
-        self.status_var.set("Deployment failed; application files were restored")
-        self.install_button.configure(state="normal", text="Install update")
-        messagebox.showerror("Update failed", error)
+        self.status_var.set(self.t("failed_status"))
+        self.install_button.configure(state="normal", text=self.t("install"))
+        messagebox.showerror(self.t("failed_title"), error)
 
     def rollback(self) -> None:
         try:
             installation = self.installation()
             backup = latest_backup(installation)
-            if not messagebox.askyesno("Rollback update", f"Restore backup:\n{backup.name}\n\nContinue?"):
+            if not messagebox.askyesno(self.t("rollback_title"), self.t("rollback_question", name=backup.name)):
                 return
             rollback_from(installation, backup)
             shutil.rmtree(backup)
-            self.status_var.set("Rollback completed")
-            messagebox.showinfo("Rollback complete", "The previous files were restored.")
+            self.status_var.set(self.t("rollback_done"))
+            messagebox.showinfo(self.t("rollback_done_title"), self.t("rollback_success"))
         except Exception as error:
-            self.status_var.set("Rollback failed")
-            messagebox.showerror("Rollback failed", str(error))
+            self.status_var.set(self.t("rollback_failed"))
+            messagebox.showerror(self.t("rollback_failed"), str(error))
 
 
 if __name__ == "__main__":

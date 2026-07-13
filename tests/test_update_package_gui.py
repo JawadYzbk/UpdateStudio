@@ -7,12 +7,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from update_package_gui import changed_paths, create_package, deployment_analysis, find_repo, validate_env_variable, validate_version
+from update_package_gui import changed_paths, create_package, deployment_analysis, find_repo, validate_destination, validate_env_variable, validate_version
 from updater_runtime import (
     DeploymentError,
     apply_update,
     command_selected_by_default,
+    deployment_summary,
     deploy_update,
+    installer_text,
     rollback_from,
     validate_environment,
 )
@@ -205,6 +207,26 @@ class UpdatePackageGuiTest(unittest.TestCase):
         for invalid in ("", "APP-VERSION", "1APP_VERSION", "APP VERSION", "APP_VERSION="):
             with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                 validate_env_variable(invalid)
+
+    def test_default_destination_requires_an_absolute_path(self):
+        self.assertEqual(validate_destination(""), "")
+        self.assertEqual(validate_destination(" C:\\inetpub\\wwwroot\\app "), "C:\\inetpub\\wwwroot\\app")
+        with self.assertRaises(ValueError):
+            validate_destination("deployments/app")
+
+    def test_arabic_installer_uses_deployment_specific_wording(self):
+        self.assertEqual(installer_text("ar", "install"), "تثبيت التحديث")
+        self.assertIn("استعادة", installer_text("ar", "rollback"))
+        self.assertEqual(installer_text("unsupported", "install"), "Install update")
+
+        with tempfile.TemporaryDirectory() as temp:
+            summary = deployment_summary(Path(temp), {
+                "version": "2.7.0", "end": "abcdef123456", "included": ["public/build/app.js"],
+                "deleted": [], "changes": {"modified": 2, "added": 1}, "warnings": [],
+            }, "ar")
+        self.assertIn("الإصدار الجديد", summary)
+        self.assertIn("\u200e2.7.0\u200e", summary)
+        self.assertIn("سيتم استبدال ملفات الواجهة", summary)
 
     def test_failed_health_check_rolls_back_files_and_allows_retry(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -23,6 +23,8 @@ target application, runs a deployment recipe, and verifies application health.
 - Record installed-version metadata and export timestamped deployment logs.
 - Stream package generation and deployment command output in live log panels.
 - Check Laravel readiness, its storage link, and configured local services.
+- Prefill the client's application destination while keeping it editable.
+- Generate the updater interface in English or Arabic.
 - Let the operator choose the deployed application directory at install time.
 - Back up every file that will be replaced or deleted before applying changes.
 - Restore automatically if installation fails and support manual latest-update
@@ -62,6 +64,15 @@ You can also double-click `launch.bat`.
    - **Extract files:** create a folder ready to paste into deployment.
    - **Updater EXE:** create a self-contained graphical updater.
 6. Select **Generate release**.
+
+The optional default app destination must be an absolute path. Generated
+updaters open with that destination prefilled, so a client can install directly
+or choose another folder. Installer language is selected per package; English
+and deployment-focused Arabic are currently available.
+
+Arabic installers embed [Noto Sans Arabic](https://notofonts.github.io/noto-docs/specimen/NotoSansArabic/)
+and register it privately for the updater process. The font remains licensed
+under the SIL Open Font License 1.1 included at `assets/fonts/NotoSansArabic-OFL.txt`.
 
 When **Exclude build** is disabled, Update Studio appends every current file
 under `public/build` to the package. This is intentional because build outputs
