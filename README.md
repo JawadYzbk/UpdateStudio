@@ -1,8 +1,8 @@
 # Update Studio
 
-Update Studio is a Windows desktop tool for creating deployment packages from
-an inclusive Git commit range. It can also generate a self-contained updater
-EXE that backs up affected files, installs the update, and supports rollback.
+Update Studio creates deployment packages for locally hosted web applications
+from an inclusive Git commit range. Its self-contained updater validates the
+target application, runs a deployment recipe, and verifies application health.
 
 <img width="982" height="712" alt="image" src="https://github.com/user-attachments/assets/c935952f-69a2-4925-9f3f-0c9cbee276d9" />
 
@@ -15,6 +15,14 @@ EXE that backs up affected files, installs the update, and supports rollback.
   it is ignored by Git.
 - Produce a verified ZIP, paste-ready extracted folder, and deletion manifest.
 - Generate a self-contained Windows updater EXE with an embedded payload.
+- Use Laravel, Laravel + Reverb, Node.js, generic PHP, static, or custom recipes.
+- Preserve deployment-owned data such as `.env`, storage, uploads, and SQLite.
+- Detect migrations and changed Composer/npm dependency files.
+- Validate required `.env` names without transmitting their values.
+- Run an HTTP health check and restore application files on failure.
+- Record installed-version metadata and export timestamped deployment logs.
+- Stream package generation and deployment command output in live log panels.
+- Check Laravel readiness, its storage link, and configured local services.
 - Let the operator choose the deployed application directory at install time.
 - Back up every file that will be replaced or deleted before applying changes.
 - Restore automatically if installation fails and support manual latest-update
@@ -49,7 +57,7 @@ You can also double-click `launch.bat`.
 2. Choose the output directory.
 3. Select the first commit. This commit is included.
 4. Select the end commit, normally `HEAD`.
-5. Configure the outputs:
+5. Configure the outputs and deployment profile:
    - **Exclude build:** omit `public/build`.
    - **Extract files:** create a folder ready to paste into deployment.
    - **Updater EXE:** create a self-contained graphical updater.
@@ -57,24 +65,35 @@ You can also double-click `launch.bat`.
 
 When **Exclude build** is disabled, Update Studio appends every current file
 under `public/build` to the package. This is intentional because build outputs
-are commonly ignored by Git.
+are commonly ignored by Git. The updater backs up the installed `public/build`,
+removes it, then installs the packaged build so stale hashed assets cannot remain.
 
-## Updater and rollback behavior
+## Deployment and rollback behavior
 
-The generated updater asks for the root installation directory. Before making
-changes, it creates:
+The generated updater compares the installed deployment with the package,
+validates the environment and Laravel readiness, then creates:
 
 ```text
 <installation>/.update_backups/<package-id>/
 ```
 
-The backup records whether every affected path existed and copies its original
-contents when present. New files, replaced files, and deleted files can
-therefore all be reversed. If applying the payload fails, rollback runs
-automatically. **Rollback latest** restores the most recent retained backup.
+The recipe enters maintenance mode when applicable, installs files, runs
+dependency and migration commands, rebuilds caches, exits maintenance, and
+performs the health check. Any failure restores application files. Database
+migrations are never automatically reversed; the failure and deployment log
+warn when manual database review may be required.
 
-Keep database migrations and other application-level deployment steps in your
-normal deployment procedure; Update Studio manages files only.
+Before installation, the updater shows every recipe command as a checkbox.
+Composer, migrations, npm install, and frontend build are selected only when
+the detected package changes require them, and can still be overridden.
+
+The application version must be valid SemVer (for example `2.7.0`). During
+deployment it replaces an existing version value in `.env`. The variable name
+is configurable in Studio and defaults to `APP_VERSION`. The updater does not
+add the variable when absent and restores its old value on rollback.
+
+Successful deployments write `.update_studio/deployment.json` and a timestamped
+log below `.update_studio/logs/`. **Rollback latest** restores the newest backup.
 
 ## Building the Windows executable
 
@@ -90,8 +109,8 @@ The executable is written to `dist\UpdateStudio.exe`.
 python -m unittest discover -s tests -v
 ```
 
-The tests cover inclusive commit ranges, deleted-file manifests, ignored build
-assets, backup creation, update application, and rollback.
+The tests cover packaging, dependency/migration analysis, protected local data,
+environment checks, metadata/log creation, health-check rollback, and retry.
 
 ## Security model
 

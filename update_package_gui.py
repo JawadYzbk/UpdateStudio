@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,59 @@ import customtkinter as ctk
 
 
 CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+VERSION_PATTERN = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+
+PROTECTED_DEFAULTS = [
+    {"path": ".env", "mode": "preserve_if_exists"},
+    {"path": "storage/app/**", "mode": "never_overwrite"},
+    {"path": "storage/logs/**", "mode": "never_overwrite"},
+    {"path": "public/uploads/**", "mode": "never_overwrite"},
+    {"path": "public/storage/**", "mode": "never_overwrite"},
+    {"path": "database/database.sqlite", "mode": "preserve_if_exists"},
+    {"path": "config/local.php", "mode": "preserve_if_exists"},
+]
+
+DEPLOYMENT_PRESETS = {
+    "Laravel": {
+        "laravel": True,
+        "before_commands": ["php artisan down"],
+        "after_commands": [
+            "composer install --no-dev --optimize-autoloader",
+            "npm ci",
+            "npm run build",
+            "php artisan migrate --force",
+            "php artisan optimize:clear",
+            "php artisan config:cache",
+            "php artisan route:cache",
+            "php artisan view:cache",
+            "php artisan up",
+        ],
+    },
+    "Laravel + Reverb": {
+        "laravel": True,
+        "before_commands": ["php artisan down"],
+        "after_commands": [
+            "composer install --no-dev --optimize-autoloader",
+            "npm ci",
+            "npm run build",
+            "php artisan migrate --force",
+            "php artisan optimize:clear",
+            "php artisan config:cache",
+            "php artisan route:cache",
+            "php artisan view:cache",
+            "php artisan up",
+        ],
+        "required_services": [{"name": "Reverb", "host": "127.0.0.1", "port": 8080}],
+    },
+    "Node.js": {"before_commands": [], "after_commands": ["npm ci"]},
+    "PHP Generic": {"before_commands": [], "after_commands": ["composer install --no-dev --optimize-autoloader"]},
+    "Static Web App": {"before_commands": [], "after_commands": []},
+    "Custom": {"before_commands": [], "after_commands": []},
+}
 
 
 @dataclass(frozen=True)
@@ -28,6 +82,20 @@ class Commit:
     @property
     def label(self) -> str:
         return f"{self.sha[:8]}  {self.date}  {self.subject}"
+
+
+def validate_version(value: str) -> str:
+    value = value.strip()
+    if not VERSION_PATTERN.fullmatch(value):
+        raise ValueError("Version must use SemVer, for example 2.7.0 or 2.7.0-beta.1.")
+    return value
+
+
+def validate_env_variable(value: str) -> str:
+    value = value.strip()
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+        raise ValueError("Version variable must be a valid environment name, for example APP_VERSION.")
+    return value
 
 
 def git(repo: Path, *args: str, text: bool = True) -> str | bytes:
@@ -112,6 +180,34 @@ def changed_paths(repo: Path, start: str, end: str) -> tuple[list[str], list[str
     return sorted(set(included)), sorted(set(deleted))
 
 
+def change_details(repo: Path, start: str, end: str) -> dict:
+    raw = str(git(repo, "diff", "--name-status", inclusive_base(repo, start), end))
+    statuses = [line.split("\t", 1)[0] for line in raw.splitlines() if line]
+    return {
+        "added": sum(status.startswith("A") for status in statuses),
+        "modified": sum(status.startswith(("M", "R", "C")) for status in statuses),
+        "deleted": sum(status.startswith("D") for status in statuses),
+    }
+
+
+def deployment_analysis(included: list[str], exclude_build: bool) -> tuple[list[str], list[str], list[str]]:
+    migrations = [path for path in included if path.startswith("database/migrations/") and path.endswith(".php")]
+    dependencies = [path for path in included if Path(path).name in {"composer.json", "composer.lock", "package.json", "package-lock.json"}]
+    warnings = []
+    if "composer.lock" in dependencies:
+        warnings.append("composer.lock changed: run composer install")
+    if "package-lock.json" in dependencies:
+        warnings.append("package-lock.json changed: run npm ci")
+    if exclude_build and any(Path(path).name in {"package.json", "package-lock.json"} for path in included):
+        warnings.append("Frontend dependencies changed but public/build is excluded; assets may be outdated")
+    return migrations, dependencies, warnings
+
+
+def added_migrations(repo: Path, start: str, end: str) -> list[str]:
+    output = str(git(repo, "diff", "--diff-filter=A", "--name-only", inclusive_base(repo, start), end))
+    return sorted(path for path in output.splitlines() if path.startswith("database/migrations/") and path.endswith(".php"))
+
+
 def create_package(
     repo: Path,
     output_dir: Path,
@@ -175,7 +271,15 @@ def build_updater_exe(
     deleted_path: Path | None,
     start: str,
     end: str,
+    profile: dict | None = None,
+    version: str = "",
+    changes: dict | None = None,
+    migrations: list[str] | None = None,
+    dependencies: list[str] | None = None,
+    warnings: list[str] | None = None,
+    progress=None,
 ) -> Path:
+    progress = progress or (lambda _message: None)
     package_id = zip_path.stem
     with zipfile.ZipFile(zip_path) as archive:
         included = sorted(name for name in archive.namelist() if not name.endswith("/"))
@@ -187,6 +291,13 @@ def build_updater_exe(
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "included": included,
         "deleted": deleted_path.read_text(encoding="utf-8").splitlines() if deleted_path else [],
+        "version": version,
+        "profile": profile or {},
+        "changes": changes or {},
+        "migrations": migrations or [],
+        "dependencies": dependencies or [],
+        "warnings": warnings or [],
+        "replace_directories": ["public/build"] if any(path.startswith("public/build/") for path in included) else [],
     }
     resource_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     updater_source = resource_root / "updater_runtime.py"
@@ -199,13 +310,15 @@ def build_updater_exe(
         raise FileNotFoundError("Run 'python -m pip install pyinstaller' before creating an updater EXE.")
 
     with tempfile.TemporaryDirectory(prefix="update-exe-") as temp:
+        progress("Preparing embedded payload and deployment manifest")
         staging = Path(temp)
         payload = staging / "payload.zip"
         manifest_path = staging / "update_manifest.json"
         shutil.copy2(zip_path, payload)
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         name = f"SandokTa3adod-Updater-{start[:8]}-{end[:8]}"
-        subprocess.run(
+        progress("Building self-contained updater EXE")
+        process = subprocess.Popen(
             [
                 python,
                 "-m",
@@ -222,11 +335,19 @@ def build_updater_exe(
                 "--add-data", f"{manifest_path}{os.pathsep}.",
                 str(updater_source),
             ],
-            check=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             creationflags=CREATE_NO_WINDOW,
         )
+        assert process.stdout is not None
+        for line in process.stdout:
+            if line.strip():
+                progress(line.rstrip())
+        if process.wait():
+            raise subprocess.CalledProcessError(process.returncode, process.args)
     exe = output_dir / f"{name}.exe"
     if not exe.is_file():
         raise RuntimeError("PyInstaller finished without creating the updater EXE.")
@@ -252,6 +373,17 @@ class UpdatePackageApp(ctk.CTk):
         self.exclude_build_var = tk.BooleanVar(value=True)
         self.extract_var = tk.BooleanVar(value=True)
         self.create_exe_var = tk.BooleanVar(value=True)
+        self.profile_var = tk.StringVar(value="Laravel")
+        self.application_var = tk.StringVar(value=self.repo.name)
+        self.version_var = tk.StringVar()
+        self.version_variable_var = tk.StringVar(value="APP_VERSION")
+        self.required_env_var = tk.StringVar()
+        self.health_url_var = tk.StringVar()
+        self.health_status_var = tk.StringVar(value="200")
+        self.before_commands_var = tk.StringVar()
+        self.after_commands_var = tk.StringVar()
+        self.protected_paths_var = tk.StringVar(value="; ".join(f"{rule['mode']}:{rule['path']}" for rule in PROTECTED_DEFAULTS))
+        self.services_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Ready")
         self._build()
         self.refresh_commits()
@@ -309,6 +441,24 @@ class UpdatePackageApp(ctk.CTk):
         self._switch(options, 1, "Extract files", "Paste-ready folder", self.extract_var)
         self._switch(options, 2, "Updater EXE", "Backup + rollback", self.create_exe_var)
 
+        deploy = ctk.CTkFrame(form, fg_color="#F8FAFC", corner_radius=12)
+        deploy.grid(row=8, column=0, sticky="ew", padx=18, pady=(4, 12))
+        deploy.grid_columnconfigure((0, 1), weight=1)
+        ctk.CTkLabel(deploy, text="Deployment profile", font=ctk.CTkFont("Segoe UI", 12, "bold"), text_color="#334155").grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 6))
+        self._text_field(deploy, 1, 0, "Application", self.application_var)
+        self._text_field(deploy, 1, 1, "Version", self.version_var, "e.g. 2.7.0")
+        ctk.CTkLabel(deploy, text="Recipe", font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color="#475569").grid(row=2, column=0, sticky="w", padx=14, pady=(8, 3))
+        ctk.CTkComboBox(deploy, variable=self.profile_var, values=list(DEPLOYMENT_PRESETS), state="readonly", height=34).grid(row=3, column=0, sticky="ew", padx=14)
+        self._text_field(deploy, 2, 1, "Version .env variable", self.version_variable_var, "APP_VERSION")
+        self._text_field(deploy, 3, 1, "Required .env names", self.required_env_var, "APP_KEY, REDIS_HOST")
+        self._text_field(deploy, 4, 0, "Health URL", self.health_url_var, "http://localhost/api/health")
+        self._text_field(deploy, 4, 1, "Expected status", self.health_status_var)
+        self._text_field(deploy, 5, 0, "Extra before commands", self.before_commands_var, "one; command; per semicolon")
+        self._text_field(deploy, 5, 1, "Extra after commands", self.after_commands_var, "one; command; per semicolon")
+        self._text_field(deploy, 6, 0, "Protected paths", self.protected_paths_var, "mode:path; mode:path")
+        self._text_field(deploy, 6, 1, "Required services", self.services_var, "MySQL:127.0.0.1:3306")
+        ctk.CTkLabel(deploy, text="Protected modes: never_overwrite, never_delete, preserve_if_exists", font=ctk.CTkFont("Segoe UI", 9), text_color="#64748B").grid(row=7, column=0, columnspan=2, sticky="w", padx=14, pady=(4, 12))
+
         actions = ctk.CTkFrame(main, fg_color="transparent")
         actions.grid(row=1, column=0, sticky="ew", padx=22, pady=(10, 18))
         self.generate_button = ctk.CTkButton(actions, text="Generate release", command=self.generate, height=44, corner_radius=10, fg_color="#2563EB", hover_color="#1D4ED8", font=ctk.CTkFont("Segoe UI", 13, "bold"))
@@ -319,8 +469,8 @@ class UpdatePackageApp(ctk.CTk):
         side.grid(row=1, column=1, sticky="nsew", padx=(12, 0))
         side.grid_columnconfigure(0, weight=1)
         side.grid_rowconfigure(3, weight=1)
-        ctk.CTkLabel(side, text="Release output", font=ctk.CTkFont("Segoe UI", 17, "bold"), text_color="#F8FAFC").grid(row=0, column=0, sticky="w", padx=22, pady=(22, 4))
-        ctk.CTkLabel(side, text="Generated artifacts appear here.", font=ctk.CTkFont("Segoe UI", 11), text_color="#94A3B8").grid(row=1, column=0, sticky="w", padx=22, pady=(0, 16))
+        ctk.CTkLabel(side, text="Live log", font=ctk.CTkFont("Segoe UI", 17, "bold"), text_color="#F8FAFC").grid(row=0, column=0, sticky="w", padx=22, pady=(22, 4))
+        ctk.CTkLabel(side, text="Generation progress and artifacts appear here.", font=ctk.CTkFont("Segoe UI", 11), text_color="#94A3B8").grid(row=1, column=0, sticky="w", padx=22, pady=(0, 16))
         self.status_chip = ctk.CTkLabel(side, textvariable=self.status_var, height=30, corner_radius=8, fg_color="#1E293B", text_color="#BFDBFE", font=ctk.CTkFont("Segoe UI", 11))
         self.status_chip.grid(row=2, column=0, sticky="ew", padx=22)
         self.result = ctk.CTkTextbox(side, corner_radius=10, border_width=0, fg_color="#111C2F", text_color="#CBD5E1", font=ctk.CTkFont("Consolas", 10), wrap="word")
@@ -355,6 +505,13 @@ class UpdatePackageApp(ctk.CTk):
         box.grid(row=0, column=column, sticky="nsew", padx=12, pady=9)
         ctk.CTkSwitch(box, text=title, variable=variable, width=130, font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#334155", progress_color="#2563EB").pack(anchor="w")
         ctk.CTkLabel(box, text=helper, width=120, wraplength=120, justify="left", font=ctk.CTkFont("Segoe UI", 9), text_color="#94A3B8").pack(anchor="w", padx=(44, 0), pady=(2, 0))
+
+    def _text_field(self, parent, row: int, column: int, title: str, variable, placeholder: str = "") -> None:
+        box = ctk.CTkFrame(parent, fg_color="transparent")
+        box.grid(row=row, column=column, sticky="ew", padx=14, pady=3)
+        box.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(box, text=title, font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color="#475569").grid(row=0, column=0, sticky="w", pady=(0, 3))
+        ctk.CTkEntry(box, textvariable=variable, placeholder_text=placeholder, height=34).grid(row=1, column=0, sticky="ew")
 
     def choose_repo(self) -> None:
         selected = filedialog.askdirectory(initialdir=self.repo)
@@ -392,16 +549,66 @@ class UpdatePackageApp(ctk.CTk):
             return
         start_index = labels.index(self.start_var.get())
         end_index = labels.index(self.end_var.get())
+        try:
+            profile = dict(DEPLOYMENT_PRESETS[self.profile_var.get()])
+            profile["before_commands"] = list(profile.get("before_commands", [])) + self._commands(self.before_commands_var.get())
+            profile["after_commands"] = list(profile.get("after_commands", [])) + self._commands(self.after_commands_var.get())
+            profile.update({
+                "name": self.profile_var.get(),
+                "application": self.application_var.get().strip() or self.repo.name,
+                "required_env": [name.strip() for name in self.required_env_var.get().replace("\n", ",").split(",") if name.strip()],
+                "health_url": self.health_url_var.get().strip(),
+                "health_status": int(self.health_status_var.get()),
+                "protected_paths": self._protected_paths(),
+                "required_services": list(profile.get("required_services", [])) + self._required_services(),
+            })
+        except (KeyError, ValueError) as error:
+            messagebox.showwarning("Invalid deployment profile", str(error))
+            return
+        try:
+            version = validate_version(self.version_var.get())
+            profile["version_variable"] = validate_env_variable(self.version_variable_var.get())
+        except ValueError as error:
+            messagebox.showwarning("Invalid application version", str(error))
+            return
         self.status_var.set("Generating...")
         self.generate_button.configure(state="disabled", text="Generating...")
-        options = (self.exclude_build_var.get(), self.extract_var.get(), self.create_exe_var.get(), self.output_var.get())
+        self._reset_log()
+        self._append_log("Generation started")
+        options = (self.exclude_build_var.get(), self.extract_var.get(), self.create_exe_var.get(), self.output_var.get(), profile, version)
         threading.Thread(target=self._generate, args=(start_index, end_index, options), daemon=True).start()
 
-    def _generate(self, start_index: int, end_index: int, options: tuple[bool, bool, bool, str]) -> None:
+    @staticmethod
+    def _commands(value: str) -> list[str]:
+        return [command.strip() for command in value.replace("\n", ";").split(";") if command.strip()]
+
+    def _protected_paths(self) -> list[dict]:
+        rules = []
+        valid = {"never_overwrite", "never_delete", "preserve_if_exists"}
+        for value in self._commands(self.protected_paths_var.get()):
+            mode, separator, path = value.partition(":")
+            if not separator or mode not in valid or not path.strip():
+                raise ValueError(f"Invalid protected path rule: {value}")
+            rules.append({"path": path.strip(), "mode": mode})
+        return rules
+
+    def _required_services(self) -> list[dict]:
+        services = []
+        for value in self._commands(self.services_var.get()):
+            try:
+                name, host, port = value.rsplit(":", 2)
+                services.append({"name": name.strip(), "host": host.strip(), "port": int(port)})
+            except ValueError as error:
+                raise ValueError(f"Invalid service (expected Name:host:port): {value}") from error
+        return services
+
+    def _generate(self, start_index: int, end_index: int, options: tuple) -> None:
         try:
-            exclude_build, extract, create_exe, output_dir = options
+            exclude_build, extract, create_exe, output_dir, profile, version = options
             start = self.commits[start_index].sha
             end = self.commits[end_index].sha
+            self._append_log(f"Analyzing commits {start[:8]} → {end[:8]}")
+            self._append_log("Creating and verifying package archive")
             package = create_package(
                 self.repo,
                 Path(output_dir),
@@ -411,28 +618,59 @@ class UpdatePackageApp(ctk.CTk):
                 extract,
             )
             zip_path, folder_path, deleted_path, count = package
+            self._append_log(f"Verified package archive ({count} files)")
+            included, _ = changed_paths(self.repo, start, end)
+            migrations, dependencies, warnings = deployment_analysis(included, exclude_build)
+            migrations = added_migrations(self.repo, start, end)
+            changes = change_details(self.repo, start, end)
+            self._append_log(f"Detected {len(migrations)} new migrations and {len(dependencies)} dependency manifests")
             lines = [f"ZIP: {zip_path}", f"Files: {count}"]
             if folder_path:
                 lines.append(f"Folder: {folder_path}")
             if deleted_path:
                 lines.append(f"Delete manifest: {deleted_path}")
             if create_exe:
-                exe = build_updater_exe(Path(output_dir), zip_path, deleted_path, start, end)
+                exe = build_updater_exe(
+                    Path(output_dir), zip_path, deleted_path, start, end,
+                    profile, version, changes, migrations, dependencies, warnings,
+                    self._append_log,
+                )
+                self._append_log("Updater EXE created")
                 lines.append(f"Auto-updater: {exe}")
+            if migrations:
+                lines.append(f"Migrations: {len(migrations)}")
+            lines.extend(f"Warning: {warning}" for warning in warnings)
             self.after(0, self._show_success, "\n".join(lines))
         except Exception as error:
             self.after(0, self._show_error, str(error))
 
     def _show_success(self, result: str) -> None:
+        self._append_log_line("Generation completed")
+        self._append_log_line("")
+        self._append_log_line(result)
+        self._finish_success()
+
+    def _reset_log(self) -> None:
         self.result.configure(state="normal")
         self.result.delete("1.0", "end")
-        self.result.insert("1.0", result)
         self.result.configure(state="disabled")
+
+    def _append_log(self, message: str) -> None:
+        self.after(0, self._append_log_line, message)
+
+    def _append_log_line(self, message: str) -> None:
+        self.result.configure(state="normal")
+        self.result.insert("end", message + "\n")
+        self.result.see("end")
+        self.result.configure(state="disabled")
+
+    def _finish_success(self) -> None:
         self.status_var.set("Package created and verified")
         self.generate_button.configure(state="normal", text="Generate release")
         messagebox.showinfo("Done", "Update package created successfully.")
 
     def _show_error(self, error: str) -> None:
+        self._append_log_line(f"FAILED: {error}")
         self.status_var.set("Failed")
         self.generate_button.configure(state="normal", text="Generate release")
         messagebox.showerror("Package generation failed", error)
