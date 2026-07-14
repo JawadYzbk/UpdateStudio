@@ -25,6 +25,9 @@ VERSION_PATTERN = re.compile(
 )
 INSTALLER_LANGUAGES = {"English": "en", "العربية": "ar"}
 
+COMPLETE_PACKAGE_EXCLUDES = {".env", "config/local.php", "database/database.sqlite"}
+COMPLETE_PACKAGE_EXCLUDED_DIRECTORIES = ("storage/", "public/storage/", "public/uploads/")
+
 PROTECTED_DEFAULTS = [
     {"path": ".env", "mode": "preserve_if_exists"},
     {"path": "storage/app/**", "mode": "never_overwrite"},
@@ -216,6 +219,22 @@ def added_migrations(repo: Path, start: str, end: str) -> list[str]:
     return sorted(path for path in output.splitlines() if path.startswith("database/migrations/") and path.endswith(".php"))
 
 
+def complete_package_excluded(relative: str) -> bool:
+    relative = relative.replace("\\", "/").removeprefix("./")
+    local_env = relative.startswith(".env.") and relative != ".env.example"
+    return local_env or relative in COMPLETE_PACKAGE_EXCLUDES or relative.startswith(COMPLETE_PACKAGE_EXCLUDED_DIRECTORIES)
+
+
+def dependency_files(repo: Path) -> list[tuple[Path, str]]:
+    return [
+        (path, path.relative_to(repo).as_posix())
+        for directory in (repo / "vendor", repo / "node_modules")
+        if directory.is_dir()
+        for path in sorted(directory.rglob("*"))
+        if path.is_file()
+    ]
+
+
 def create_package(
     repo: Path,
     output_dir: Path,
@@ -223,10 +242,11 @@ def create_package(
     end: str,
     exclude_build: bool,
     extract: bool,
+    complete_app: bool = False,
 ) -> tuple[Path, Path | None, Path | None, int]:
     included, deleted = changed_paths(repo, start, end)
     git_included = [path for path in included if not path.startswith("public/build/")]
-    deleted = [path for path in deleted if not path.startswith("public/build/")]
+    deleted = [path for path in deleted if not path.startswith("public/build/") and not complete_package_excluded(path)]
     build_files: list[Path] = []
     if not exclude_build:
         build_dir = repo / "public" / "build"
@@ -236,7 +256,9 @@ def create_package(
         if not build_files:
             raise FileNotFoundError("public/build is empty. Run the frontend build or enable 'Exclude build'.")
     build_paths = [path.relative_to(repo).as_posix() for path in build_files]
-    included = sorted(set(git_included + build_paths))
+    dependencies = dependency_files(repo) if complete_app else []
+    dependency_paths = [relative for _, relative in dependencies]
+    included = sorted(set(git_included + build_paths + dependency_paths))
     if not included and not deleted:
         raise ValueError("No changed files exist in the selected range.")
 
@@ -247,15 +269,32 @@ def create_package(
     folder_path = output_dir / name if extract else None
     deleted_path = output_dir / f"{name}.deleted.txt" if deleted else None
 
-    if git_included:
+    if complete_app:
+        with tempfile.TemporaryDirectory(prefix="complete-package-") as temp:
+            committed_zip = Path(temp) / "committed.zip"
+            git(repo, "archive", "--format=zip", f"--output={committed_zip}", end)
+            local_dependency_roots = tuple(f"{directory.name}/" for directory in (repo / "vendor", repo / "node_modules") if directory.is_dir())
+            with zipfile.ZipFile(committed_zip) as source, zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                for info in source.infolist():
+                    if info.is_dir() or complete_package_excluded(info.filename) or info.filename.startswith(("public/build/", *local_dependency_roots)):
+                        continue
+                    archive.writestr(info, source.read(info.filename))
+        git_included = []
+    elif git_included:
         git(repo, "archive", "--format=zip", f"--output={zip_path}", end, "--", *git_included)
     else:
         with zipfile.ZipFile(zip_path, "w"):
             pass
-    if build_files:
+    if build_files or dependencies:
         with zipfile.ZipFile(zip_path, "a", compression=zipfile.ZIP_DEFLATED) as archive:
             for file, relative in zip(build_files, build_paths):
                 archive.write(file, relative)
+            for file, relative in dependencies:
+                archive.write(file, relative)
+
+    if complete_app:
+        with zipfile.ZipFile(zip_path) as archive:
+            included = sorted(name for name in archive.namelist() if not name.endswith("/"))
 
     if folder_path:
         folder_path.mkdir()
@@ -305,7 +344,7 @@ def build_updater_exe(
         "migrations": migrations or [],
         "dependencies": dependencies or [],
         "warnings": warnings or [],
-        "replace_directories": ["public/build"] if any(path.startswith("public/build/") for path in included) else [],
+        "replace_directories": [directory for directory in ("public/build", "vendor", "node_modules") if any(path.startswith(f"{directory}/") for path in included)],
     }
     resource_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     updater_source = resource_root / "updater_runtime.py"
@@ -385,6 +424,7 @@ class UpdatePackageApp(ctk.CTk):
         self.start_var = tk.StringVar()
         self.end_var = tk.StringVar()
         self.exclude_build_var = tk.BooleanVar(value=True)
+        self.complete_app_var = tk.BooleanVar(value=False)
         self.extract_var = tk.BooleanVar(value=True)
         self.create_exe_var = tk.BooleanVar(value=True)
         self.profile_var = tk.StringVar(value="Laravel")
@@ -452,10 +492,11 @@ class UpdatePackageApp(ctk.CTk):
 
         options = ctk.CTkFrame(form, fg_color="#F8FAFC", corner_radius=12)
         options.grid(row=7, column=0, sticky="ew", padx=18, pady=(10, 8))
-        options.grid_columnconfigure((0, 1, 2), weight=1)
+        options.grid_columnconfigure((0, 1, 2, 3), weight=1)
         self._switch(options, 0, "Exclude build", "Skip build assets", self.exclude_build_var)
-        self._switch(options, 1, "Extract files", "Paste-ready folder", self.extract_var)
-        self._switch(options, 2, "Updater EXE", "Backup + rollback", self.create_exe_var)
+        self._switch(options, 1, "Complete app", "Include dependencies", self.complete_app_var)
+        self._switch(options, 2, "Extract files", "Paste-ready folder", self.extract_var)
+        self._switch(options, 3, "Updater EXE", "Backup + rollback", self.create_exe_var)
 
         deploy = ctk.CTkFrame(form, fg_color="#F8FAFC", corner_radius=12)
         deploy.grid(row=8, column=0, sticky="ew", padx=18, pady=(4, 12))
@@ -599,7 +640,7 @@ class UpdatePackageApp(ctk.CTk):
         self.generate_button.configure(state="disabled", text="Generating...")
         self._reset_log()
         self._append_log("Generation started")
-        options = (self.exclude_build_var.get(), self.extract_var.get(), self.create_exe_var.get(), self.output_var.get(), profile, version)
+        options = (self.exclude_build_var.get(), self.complete_app_var.get(), self.extract_var.get(), self.create_exe_var.get(), self.output_var.get(), profile, version)
         threading.Thread(target=self._generate, args=(start_index, end_index, options), daemon=True).start()
 
     @staticmethod
@@ -628,7 +669,7 @@ class UpdatePackageApp(ctk.CTk):
 
     def _generate(self, start_index: int, end_index: int, options: tuple) -> None:
         try:
-            exclude_build, extract, create_exe, output_dir, profile, version = options
+            exclude_build, complete_app, extract, create_exe, output_dir, profile, version = options
             start = self.commits[start_index].sha
             end = self.commits[end_index].sha
             self._append_log(f"Analyzing commits {start[:8]} → {end[:8]}")
@@ -640,6 +681,7 @@ class UpdatePackageApp(ctk.CTk):
                 end,
                 exclude_build,
                 extract,
+                complete_app,
             )
             zip_path, folder_path, deleted_path, count = package
             self._append_log(f"Verified package archive ({count} files)")

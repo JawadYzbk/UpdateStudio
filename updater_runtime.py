@@ -366,15 +366,17 @@ def deployment_summary(installation: Path, manifest: dict, language: str = "en")
 def command_selected_by_default(command: str, manifest: dict) -> bool:
     command = command.lower()
     dependencies = {Path(path).name for path in manifest.get("dependencies", [])}
+    included = manifest.get("included", [])
     if command.startswith("composer install"):
-        return bool(dependencies & {"composer.json", "composer.lock"})
+        return bool(dependencies & {"composer.json", "composer.lock"}) and not any(path.startswith("vendor/") for path in included)
     if "artisan migrate" in command:
         return bool(manifest.get("migrations"))
     if command.startswith(("npm ci", "npm install")):
-        build_included = any(path.startswith("public/build/") for path in manifest.get("included", []))
-        return bool(dependencies & {"package.json", "package-lock.json"}) and not build_included
+        build_included = any(path.startswith("public/build/") for path in included)
+        modules_included = any(path.startswith("node_modules/") for path in included)
+        return bool(dependencies & {"package.json", "package-lock.json"}) and not build_included and not modules_included
     if command.startswith("npm run build"):
-        build_included = any(path.startswith("public/build/") for path in manifest.get("included", []))
+        build_included = any(path.startswith("public/build/") for path in included)
         return bool(dependencies & {"package.json", "package-lock.json"}) and not build_included
     return True
 

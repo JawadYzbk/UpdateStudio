@@ -13,6 +13,8 @@ target application, runs a deployment recipe, and verifies application health.
 - Export exact committed file versions rather than dirty working-tree copies.
 - Optionally include the complete current `public/build` directory, even when
   it is ignored by Git.
+- Create a complete application package with the current `vendor` and
+  `node_modules`, while excluding local `.env` files, local config, uploads, and storage data.
 - Produce a verified ZIP, paste-ready extracted folder, and deletion manifest.
 - Generate a self-contained Windows updater EXE with an embedded payload.
 - Use Laravel, Laravel + Reverb, Node.js, generic PHP, static, or custom recipes.
@@ -62,6 +64,8 @@ You can also double-click `launch.bat`.
 4. Select the end commit, normally `HEAD`.
 5. Configure the outputs and deployment profile:
    - **Exclude build:** omit `public/build`.
+   - **Complete app:** include every committed application file plus the current
+     root `vendor` and `node_modules` directories.
    - **Extract files:** create a folder ready to paste into deployment.
    - **Updater EXE:** create a self-contained graphical updater.
 6. Select **Generate release**.

@@ -146,6 +146,52 @@ class UpdatePackageGuiTest(unittest.TestCase):
             with zipfile.ZipFile(zip_path) as archive:
                 self.assertIn("public/build/manifest.json", archive.namelist())
 
+    def test_complete_package_includes_dependencies_but_not_local_data(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            output = Path(temp) / "output"
+            repo.mkdir()
+
+            def run(*args: str) -> str:
+                return subprocess.run(
+                    ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+                ).stdout.strip()
+
+            run("init")
+            run("config", "user.name", "Test")
+            run("config", "user.email", "test@example.com")
+            (repo / ".gitignore").write_text("/vendor\n/node_modules\n", encoding="utf-8")
+            (repo / "app.txt").write_text("app", encoding="utf-8")
+            (repo / "storage" / "logs").mkdir(parents=True)
+            (repo / "storage" / "logs" / "app.log").write_text("private", encoding="utf-8")
+            (repo / ".env").write_text("APP_KEY=secret", encoding="utf-8")
+            (repo / ".env.production").write_text("APP_KEY=production-secret", encoding="utf-8")
+            (repo / ".env.example").write_text("APP_KEY=", encoding="utf-8")
+            (repo / "config").mkdir()
+            (repo / "config" / "local.php").write_text("local config", encoding="utf-8")
+            run("add", ".")
+            run("commit", "-m", "release")
+            commit = run("rev-parse", "HEAD")
+            (repo / "vendor").mkdir()
+            (repo / "vendor" / "autoload.php").write_text("autoload", encoding="utf-8")
+            (repo / "node_modules" / "package").mkdir(parents=True)
+            (repo / "node_modules" / "package" / "index.js").write_text("module", encoding="utf-8")
+
+            zip_path, _, _, _ = create_package(
+                repo, output, commit, commit, exclude_build=True, extract=False, complete_app=True
+            )
+
+            with zipfile.ZipFile(zip_path) as archive:
+                names = archive.namelist()
+            self.assertIn("app.txt", names)
+            self.assertIn("vendor/autoload.php", names)
+            self.assertIn("node_modules/package/index.js", names)
+            self.assertIn(".env.example", names)
+            self.assertNotIn(".env", names)
+            self.assertNotIn(".env.production", names)
+            self.assertNotIn("config/local.php", names)
+            self.assertFalse(any(name.startswith("storage/") for name in names))
+
     def test_web_deployment_protects_local_data_and_writes_metadata_and_log(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -279,6 +325,11 @@ class UpdatePackageGuiTest(unittest.TestCase):
         self.assertTrue(command_selected_by_default("npm ci", manifest))
         self.assertTrue(command_selected_by_default("npm run build", manifest))
         self.assertTrue(command_selected_by_default("php artisan migrate --force", manifest))
+
+        manifest["included"].extend(["vendor/autoload.php", "node_modules/package/index.js"])
+        self.assertFalse(command_selected_by_default("composer install --no-dev", manifest))
+        self.assertFalse(command_selected_by_default("npm ci", manifest))
+        self.assertTrue(command_selected_by_default("npm run build", manifest))
 
         manifest["included"].append("public/build/manifest.json")
         self.assertFalse(command_selected_by_default("npm ci", manifest))
