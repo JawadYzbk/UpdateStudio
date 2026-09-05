@@ -270,18 +270,20 @@ def create_package(
     deleted_path = output_dir / f"{name}.deleted.txt" if deleted else None
 
     if complete_app:
-        with tempfile.TemporaryDirectory(prefix="complete-package-") as temp:
-            committed_zip = Path(temp) / "committed.zip"
-            git(repo, "archive", "--format=zip", f"--output={committed_zip}", end)
-            local_dependency_roots = tuple(f"{directory.name}/" for directory in (repo / "vendor", repo / "node_modules") if directory.is_dir())
-            with zipfile.ZipFile(committed_zip) as source, zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-                for info in source.infolist():
-                    if info.is_dir() or complete_package_excluded(info.filename) or info.filename.startswith(("public/build/", *local_dependency_roots)):
-                        continue
-                    archive.writestr(info, source.read(info.filename))
+        tree_output = str(git(repo, "ls-tree", "-r", "--name-only", end))
+        local_dependency_roots = tuple(f"{directory.name}/" for directory in (repo / "vendor", repo / "node_modules") if directory.is_dir())
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for filename in tree_output.splitlines():
+                if complete_package_excluded(filename) or filename.startswith(("public/build/", *local_dependency_roots)):
+                    continue
+                data = bytes(git(repo, "show", f"{end}:{filename}", text=False))
+                archive.writestr(filename, data)
         git_included = []
     elif git_included:
-        git(repo, "archive", "--format=zip", f"--output={zip_path}", end, "--", *git_included)
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in git_included:
+                data = bytes(git(repo, "show", f"{end}:{path}", text=False))
+                archive.writestr(path, data)
     else:
         with zipfile.ZipFile(zip_path, "w"):
             pass

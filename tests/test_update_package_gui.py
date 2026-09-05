@@ -192,6 +192,48 @@ class UpdatePackageGuiTest(unittest.TestCase):
             self.assertNotIn("config/local.php", names)
             self.assertFalse(any(name.startswith("storage/") for name in names))
 
+    def test_export_ignore_files_are_still_packaged(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            output = Path(temp) / "output"
+            repo.mkdir()
+
+            def run(*args: str) -> str:
+                return subprocess.run(
+                    ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+                ).stdout.strip()
+
+            run("init")
+            run("config", "user.name", "Test")
+            run("config", "user.email", "test@example.com")
+            (repo / ".gitattributes").write_text(
+                ".gitattributes export-ignore\ntests/ export-ignore\n",
+                encoding="utf-8",
+            )
+            (repo / "app.txt").write_text("app", encoding="utf-8")
+            (repo / "tests").mkdir()
+            (repo / "tests" / "test.php").write_text("<?php", encoding="utf-8")
+            run("add", ".")
+            run("commit", "-m", "initial")
+            start = run("rev-parse", "HEAD")
+
+            (repo / "app.txt").write_text("v2", encoding="utf-8")
+            (repo / "tests" / "test.php").write_text("<?php // v2", encoding="utf-8")
+            run("add", ".")
+            run("commit", "-m", "update")
+            end = run("rev-parse", "HEAD")
+
+            zip_path, _, _, count = create_package(
+                repo, output, start, end, exclude_build=True, extract=False
+            )
+
+            with zipfile.ZipFile(zip_path) as archive:
+                names = archive.namelist()
+            self.assertIn("app.txt", names)
+            self.assertIn("tests/test.php", names)
+            self.assertIn(".gitattributes", names)
+            self.assertEqual(count, 3)
+
     def test_web_deployment_protects_local_data_and_writes_metadata_and_log(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
