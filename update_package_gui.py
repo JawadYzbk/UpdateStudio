@@ -38,6 +38,11 @@ PROTECTED_DEFAULTS = [
     {"path": "config/local.php", "mode": "preserve_if_exists"},
 ]
 
+# `php artisan optimize` (Laravel 11+) caches config, events, routes and views, and also
+# runs every package's registered optimize step, e.g. `filament:optimize` and
+# `icons:cache`. `optimize:clear` removes those package caches too, so rebuilding them
+# with config/route/view:cache alone left Blade Icons scanning its SVG sets on every
+# request (about 0.8 s per page in SandokTa3adod).
 DEPLOYMENT_PRESETS = {
     "Laravel": {
         "laravel": True,
@@ -48,9 +53,7 @@ DEPLOYMENT_PRESETS = {
             "npm run build",
             "php artisan migrate --force",
             "php artisan optimize:clear",
-            "php artisan config:cache",
-            "php artisan route:cache",
-            "php artisan view:cache",
+            "php artisan optimize",
             "php artisan up",
         ],
     },
@@ -63,9 +66,7 @@ DEPLOYMENT_PRESETS = {
             "npm run build",
             "php artisan migrate --force",
             "php artisan optimize:clear",
-            "php artisan config:cache",
-            "php artisan route:cache",
-            "php artisan view:cache",
+            "php artisan optimize",
             "php artisan up",
         ],
         "required_services": [{"name": "Reverb", "host": "127.0.0.1", "port": 8080}],

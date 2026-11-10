@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from update_package_gui import changed_paths, create_package, deployment_analysis, find_repo, validate_destination, validate_env_variable, validate_version
+from update_package_gui import DEPLOYMENT_PRESETS, changed_paths, create_package, deployment_analysis, find_repo, validate_destination, validate_env_variable, validate_version
 from updater_runtime import (
     DeploymentError,
     apply_update,
@@ -377,6 +377,20 @@ class UpdatePackageGuiTest(unittest.TestCase):
         self.assertFalse(command_selected_by_default("npm ci", manifest))
         self.assertFalse(command_selected_by_default("npm run build", manifest))
         self.assertTrue(command_selected_by_default("php artisan config:cache", manifest))
+        self.assertTrue(command_selected_by_default("php artisan optimize", manifest))
+
+    def test_laravel_presets_rebuild_all_caches_after_clearing(self):
+        # optimize:clear also wipes package caches (Filament components, Blade icons);
+        # `php artisan optimize` must follow it so they are rebuilt before going live.
+        for name in ("Laravel", "Laravel + Reverb"):
+            with self.subTest(preset=name):
+                commands = DEPLOYMENT_PRESETS[name]["after_commands"]
+                self.assertIn("php artisan optimize", commands)
+                clear = commands.index("php artisan optimize:clear")
+                optimize = commands.index("php artisan optimize")
+                self.assertLess(clear, optimize)
+                self.assertLess(optimize, commands.index("php artisan up"))
+                self.assertGreater(optimize, commands.index("php artisan migrate --force"))
 
 
 if __name__ == "__main__":
