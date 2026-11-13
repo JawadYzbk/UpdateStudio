@@ -146,6 +146,49 @@ def load_commits(repo: Path, limit: int = 500) -> list[Commit]:
     return [Commit(*line.split("\x1f", 2)) for line in output.splitlines() if line]
 
 
+RELEASE_TAG_PATTERN = re.compile(r"^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$")
+
+
+def _semver_key(version: str) -> tuple:
+    core, _, pre = version.partition("-")
+    # A pre-release sorts before its release: 1.7.0-beta < 1.7.0.
+    return (*map(int, core.split(".")), pre == "", pre)
+
+
+def detect_version(repo: Path, commit: str) -> tuple[str, str]:
+    """Return (version, source) for a commit from the repository's own versioning.
+
+    1. A release tag on the commit itself (v1.7.0)            -> "1.7.0"
+    2. Commits after the last release tag (3 after v1.7.0)    -> "1.7.0+3.g54c4ddf" (not a release)
+    3. "version" in package.json / composer.json at the commit
+    Returns ("", "") when the repository has no version, so it must be typed by hand.
+    """
+    tags = str(git(repo, "tag", "--points-at", commit)).split()
+    releases = [match.group(1) for match in map(RELEASE_TAG_PATTERN.match, tags) if match]
+    if releases:
+        version = max(releases, key=_semver_key)
+        return version, f"release tag v{version}"
+
+    try:
+        described = str(git(repo, "describe", "--tags", "--long", "--match", "v[0-9]*", commit)).strip()
+    except subprocess.CalledProcessError:
+        described = ""
+    match = re.fullmatch(r"v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-(\d+)-g([0-9a-f]+)", described)
+    if match:
+        base, count, sha = match.groups()
+        return f"{base}+{count}.g{sha[:7]}", f"{count} commit(s) after v{base}, not a release"
+
+    for manifest in ("package.json", "composer.json"):
+        try:
+            data = json.loads(str(git(repo, "show", f"{commit}:{manifest}")))
+        except (subprocess.CalledProcessError, ValueError):
+            continue
+        version = str(data.get("version", "")).strip() if isinstance(data, dict) else ""
+        if version and VERSION_PATTERN.fullmatch(version):
+            return version, manifest
+    return "", ""
+
+
 def inclusive_base(repo: Path, start: str) -> str:
     parents = str(git(repo, "rev-list", "--parents", "-n1", start)).strip().split()
     if len(parents) > 1:
@@ -433,6 +476,8 @@ class UpdatePackageApp(ctk.CTk):
         self.profile_var = tk.StringVar(value="Laravel")
         self.application_var = tk.StringVar(value=self.repo.name)
         self.version_var = tk.StringVar()
+        self.version_hint_var = tk.StringVar(value="Type the version")
+        self.version_entry = None
         self.version_variable_var = tk.StringVar(value="APP_VERSION")
         self.destination_var = tk.StringVar()
         self.installer_language_var = tk.StringVar(value="English")
@@ -445,6 +490,7 @@ class UpdatePackageApp(ctk.CTk):
         self.services_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Ready")
         self._build()
+        self.end_var.trace_add("write", lambda *_: self._sync_version())
         self.refresh_commits()
 
     def _build(self) -> None:
@@ -506,7 +552,8 @@ class UpdatePackageApp(ctk.CTk):
         deploy.grid_columnconfigure((0, 1), weight=1)
         ctk.CTkLabel(deploy, text="Deployment profile", font=ctk.CTkFont("Segoe UI", 12, "bold"), text_color="#334155").grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(12, 6))
         self._text_field(deploy, 1, 0, "Application", self.application_var)
-        self._text_field(deploy, 1, 1, "Version", self.version_var, "e.g. 2.7.0")
+        self.version_entry = self._text_field(deploy, 1, 1, "Version", self.version_var, "e.g. 2.7.0")
+        ctk.CTkLabel(self.version_entry.master, textvariable=self.version_hint_var, font=ctk.CTkFont("Segoe UI", 9), text_color="#94A3B8").grid(row=2, column=0, sticky="w")
         ctk.CTkLabel(deploy, text="Recipe", font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color="#475569").grid(row=2, column=0, sticky="w", padx=14, pady=(8, 3))
         ctk.CTkComboBox(deploy, variable=self.profile_var, values=list(DEPLOYMENT_PRESETS), state="readonly", height=34).grid(row=3, column=0, sticky="ew", padx=14)
         self._text_field(deploy, 2, 1, "Version .env variable", self.version_variable_var, "APP_VERSION")
@@ -572,12 +619,44 @@ class UpdatePackageApp(ctk.CTk):
         ctk.CTkSwitch(box, text=title, variable=variable, width=130, font=ctk.CTkFont("Segoe UI", 11, "bold"), text_color="#334155", progress_color="#2563EB").pack(anchor="w")
         ctk.CTkLabel(box, text=helper, width=120, wraplength=120, justify="left", font=ctk.CTkFont("Segoe UI", 9), text_color="#94A3B8").pack(anchor="w", padx=(44, 0), pady=(2, 0))
 
-    def _text_field(self, parent, row: int, column: int, title: str, variable, placeholder: str = "") -> None:
+    def _text_field(self, parent, row: int, column: int, title: str, variable, placeholder: str = ""):
         box = ctk.CTkFrame(parent, fg_color="transparent")
         box.grid(row=row, column=column, sticky="ew", padx=14, pady=3)
         box.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(box, text=title, font=ctk.CTkFont("Segoe UI", 10, "bold"), text_color="#475569").grid(row=0, column=0, sticky="w", pady=(0, 3))
-        ctk.CTkEntry(box, textvariable=variable, placeholder_text=placeholder, height=34).grid(row=1, column=0, sticky="ew")
+        entry = ctk.CTkEntry(box, textvariable=variable, placeholder_text=placeholder, height=34)
+        entry.grid(row=1, column=0, sticky="ew")
+        return entry
+
+    def _selected_end(self) -> str | None:
+        labels = [commit.label for commit in self.commits]
+        if self.end_var.get() not in labels:
+            return None
+        return self.commits[labels.index(self.end_var.get())].sha
+
+    def _sync_version(self) -> None:
+        """Take the version from the repository (tag / package.json) for the selected end commit.
+
+        When the repository has its own version the field is locked, so a package can never
+        claim a version the code does not have. Only repositories without one are typed by hand.
+        """
+        end = self._selected_end()
+        if not end or self.version_entry is None:
+            return
+        try:
+            version, source = detect_version(self.repo, end)
+        except (OSError, subprocess.SubprocessError):
+            version, source = "", ""
+        if version:
+            self.version_entry.configure(state="normal")
+            self.version_var.set(version)
+            self.version_entry.configure(state="disabled")
+            self.version_hint_var.set(f"Automatic: {source}")
+        else:
+            if str(self.version_entry.cget("state")) == "disabled":
+                self.version_entry.configure(state="normal")
+                self.version_var.set("")
+            self.version_hint_var.set("No version in the repository; type it")
 
     def choose_repo(self) -> None:
         selected = filedialog.askdirectory(initialdir=self.repo)
@@ -587,6 +666,7 @@ class UpdatePackageApp(ctk.CTk):
             self.repo = find_repo(Path(selected))
             self.repo_var.set(str(self.repo))
             self.refresh_commits()
+            self._sync_version()
         except Exception as error:
             messagebox.showerror("Invalid repository", str(error))
 

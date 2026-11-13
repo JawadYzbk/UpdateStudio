@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from update_package_gui import DEPLOYMENT_PRESETS, changed_paths, create_package, deployment_analysis, find_repo, validate_destination, validate_env_variable, validate_version
+from update_package_gui import DEPLOYMENT_PRESETS, changed_paths, create_package, deployment_analysis, detect_version, find_repo, validate_destination, validate_env_variable, validate_version
 from updater_runtime import (
     DeploymentError,
     apply_update,
@@ -283,6 +283,47 @@ class UpdatePackageGuiTest(unittest.TestCase):
             rollback_from(installation, backup)
             self.assertFalse((installation / ".update_studio" / "deployment.json").exists())
             self.assertIn('FRONTEND_VERSION="1.0.0"', (installation / ".env").read_text(encoding="utf-8"))
+
+    def test_version_is_taken_from_the_repository(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp)
+
+            def run(*args: str) -> str:
+                return subprocess.run(
+                    ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+                ).stdout.strip()
+
+            run("init")
+            run("config", "user.name", "Test")
+            run("config", "user.email", "test@example.com")
+            (repo / "readme.txt").write_text("no version yet", encoding="utf-8")
+            run("add", ".")
+            run("commit", "-m", "first")
+            self.assertEqual(detect_version(repo, run("rev-parse", "HEAD")), ("", ""))
+
+            (repo / "package.json").write_text('{"version": "1.6.0"}', encoding="utf-8")
+            run("add", ".")
+            run("commit", "-m", "manifest")
+            self.assertEqual(detect_version(repo, run("rev-parse", "HEAD")), ("1.6.0", "package.json"))
+
+            (repo / "package.json").write_text('{"version": "1.7.0"}', encoding="utf-8")
+            run("add", ".")
+            run("commit", "-m", "chore(release): v1.7.0")
+            run("tag", "-a", "v1.7.0", "-m", "v1.7.0")
+            release = run("rev-parse", "HEAD")
+            self.assertEqual(detect_version(repo, release), ("1.7.0", "release tag v1.7.0"))
+
+            (repo / "readme.txt").write_text("after the release", encoding="utf-8")
+            run("add", ".")
+            run("commit", "-m", "feat: unreleased work")
+            head = run("rev-parse", "HEAD")
+            version, source = detect_version(repo, head)
+            self.assertEqual(version, f"1.7.0+1.g{head[:7]}")
+            self.assertIn("not a release", source)
+            self.assertEqual(validate_version(version), version)
+
+            # An older commit keeps the version it had, not the newest one.
+            self.assertEqual(detect_version(repo, release)[0], "1.7.0")
 
     def test_application_version_requires_semver(self):
         self.assertEqual(validate_version(" 2.7.0-beta.1 "), "2.7.0-beta.1")
