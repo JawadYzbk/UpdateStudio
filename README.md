@@ -4,8 +4,6 @@ Update Studio creates deployment packages for locally hosted web applications
 from an inclusive Git commit range. Its self-contained updater validates the
 target application, runs a deployment recipe, and verifies application health.
 
-<img width="982" height="712" alt="image" src="https://github.com/user-attachments/assets/c935952f-69a2-4925-9f3f-0c9cbee276d9" />
-
 
 ## Features
 
@@ -36,8 +34,7 @@ target application, runs a deployment recipe, and verifies application health.
 
 ## Download
 
-Download `UpdateStudio.exe` from the latest GitHub release. Place it inside or
-below the Git repository you want to package, then run it.
+Download `UpdateStudio.exe` from the latest GitHub release. Run it and pick the Git repository to package; it remembers your projects.
 
 ## Running from source
 
@@ -58,17 +55,45 @@ You can also double-click `launch.bat`.
 
 ## Creating a package
 
-1. Choose a Git repository.
-2. Choose the output directory.
-3. Select the first commit. This commit is included.
-4. Select the end commit, normally `HEAD`.
-5. Configure the outputs and deployment profile:
-   - **Exclude build:** omit `public/build`.
-   - **Complete app:** include every committed application file plus the current
-     root `vendor` and `node_modules` directories.
-   - **Extract files:** create a folder ready to paste into deployment.
-   - **Updater EXE:** create a self-contained graphical updater.
-6. Select **Generate release**.
+1. Pick the **Project** at the top (or **Open…** a Git repository). Its saved
+   settings load automatically.
+2. **Where is it installed?** Choose the install folder. When it holds an
+   Update Studio install, the window shows what is installed (version, commit,
+   date) next to what the package will contain, and the **From** commit is
+   preselected right after the installed commit.
+3. **What goes in the package?** Adjust the inclusive **From** / **To** commits,
+   or use a shortcut: *After installed*, *After previous release*, *After last
+   package*, *Latest commit only*. The summary lists the commits, changed files,
+   new migrations and warnings. The version is read from the repository (see
+   below).
+4. **Output:** choose the folder and the switches:
+   - **Updater EXE:** a self-contained graphical updater with backup + rollback.
+   - **Extracted folder:** a paste-ready copy of the files.
+   - **Include public/build:** ship the current frontend build, even if ignored.
+   - **Complete app:** every committed file plus the current root `vendor` and
+     `node_modules`, without local `.env`, config, uploads or storage data.
+5. Select **Generate release**.
+
+Rarely changed deployment settings live in **Project settings**: application
+name, recipe, installer language, version `.env` variable, required `.env`
+names, extra before/after commands, protected paths (a rule + path per row),
+required services (name, host, port per row) and the health URL and status.
+
+### Per-project preferences
+
+Every setting above, plus the output folder, the switches and the last end
+commit, is saved per project and restored when the project is opened. They are
+stored per user, outside the repository, in `%APPDATA%\UpdateStudio\projects.json`
+(a project is keyed by its repository path, and found again through its git
+remote when the folder moves). Set `UPDATE_STUDIO_CONFIG_DIR` to use another
+folder.
+
+### Version
+
+The version is taken from the repository for the selected end commit: a
+`vX.Y.Z` tag on it, `X.Y.Z+N.gSHA` for commits after a tag, or `version` in
+`package.json` / `composer.json`. The field is locked when one is found and
+only typed by hand for repositories without any version.
 
 The optional default app destination must be an absolute path. Generated
 updaters open with that destination prefilled, so a client can install directly
